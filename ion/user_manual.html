@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wails Frontend User Manual</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            color: #333;
+        }
+        h1, h2 {
+            color: #2c3e50;
+        }
+        .command {
+            background-color: #f4f4f4;
+            border-left: 4px solid #3498db;
+            padding: 10px 15px;
+            margin: 15px 0;
+            font-family: 'Courier New', Courier, monospace;
+            overflow-x: auto;
+        }
+        .note {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 10px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .step {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Wails Frontend User Manual</h1>
+    <p>This manual explains how to start the Wails frontend for the Ion project.</p>
+
+    <h2>Prerequisites</h2>
+    <ul>
+        <li>Node.js and npm installed (for frontend dependencies)</li>
+        <li>Go installed (for the Wails backend)</li>
+        <li>Wails CLI installed (version 2.12.0 or compatible)</li>
+    </ul>
+
+    <h2>Project Structure</h2>
+    <p>The project is located at: <code>/home/ghost/iON/ion</code></p>
+    <ul>
+        <li><code>/home/ghost/iON/ion/frontend</code> - Contains the Svelte frontend</li>
+        <li><code>/home/ghost/iON/ion/main.go</code> - Main Go application</li>
+        <li><code>/home/ghost/iON/ion/wails.json</code> - Wails configuration</li>
+    </ul>
+
+    <h2>Steps to Start the Frontend</h2>
+
+    <div class="step">
+        <h3>Step 1: Navigate to the Project Directory</h3>
+        <p>Open a terminal and change to the project directory:</p>
+        <div class="command">
+            cd /home/ghost/iON/ion
+        </div>
+    </div>
+
+    <div class="step">
+        <h3>Step 2: Install Frontend Dependencies (if not already installed)</h3>
+        <p>The first time you set up the project, you need to install the frontend dependencies:</p>
+        <div class="command">
+            cd frontend && npm install
+        </div>
+        <p>After installation, return to the project root:</p>
+        <div class="command">
+            cd ..
+        </div>
+        <div class="note">
+            <strong>Note:</strong> If you see a warning about deprecated packages or vulnerabilities, you can usually ignore them for development. To fix vulnerabilities, you can run <code>npm audit fix</code> in the frontend directory.
+        </div>
+    </div>
+
+    <div class="step">
+        <h3>Step 3: Start the Wails Development Server</h3>
+        <p>Run the Wails development command to start both the Go backend and the frontend dev server:</p>
+        <div class="command">
+            wails dev
+        </div>
+        <p>You should see output similar to:</p>
+        <div class="command">
+            [0;92mWails CLI[0m [0;31mv2.12.0[0m
+            [0;92mExecuting: go mod tidy[0m
+            ...
+            [0;92mVite Server URL: http://localhost:5173/[0m
+            ...
+            [0;92mRunning frontend DevWatcher command: 'npm run dev'[0m
+            ...
+            [0;92mUsing DevServer URL: http://localhost:34115[0m
+            [0;92mUsing Frontend DevServer URL: http://localhost:5173/[0m
+            ...
+            [0;92mTo develop in the browser and call your bound Go methods from Javascript, navigate to: http://localhost:34115[0m
+        </div>
+    </div>
+
+    <div class="step">
+        <h3>Step 4: Access the Application</h3>
+        <p>Once the development server is running, you can access the application in your web browser:</p>
+        <ul>
+            <li><strong>Wails Application (with Go backend):</strong> <a href="http://localhost:34115" target="_blank">http://localhost:34115</a></li>
+            <li><strong>Frontend Dev Server (for hot reload):</strong> <a href="http://localhost:5173/" target="_blank">http://localhost:5173/</a></li>
+        </ul>
+        <div class="note">
+            <strong>Note:</strong> The Wails application (localhost:34115) is the main interface that connects to your Go backend. The frontend dev server (localhost:5173) provides hot module replacement for faster development.
+        </div>
+    </div>
+
+    <h2>Stopping the Development Server</h2>
+    <p>To stop the Wails development server, press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the terminal where the command is running.</p>
+
+    <h2>Troubleshooting</h2>
+    <ul>
+        <li><strong>Port already in use:</strong> If you get an error about ports 5173 or 34115 being in use, stop any existing processes or change the ports in the configuration.</li>
+        <li><strong>Dependencies not found:</strong> Make sure you ran <code>npm install</code> in the frontend directory.</li>
+        <li><strong>Wails command not found:</strong> Ensure the Wails CLI is installed and in your PATH. You can install it with <code>go install github.com/wailsapp/wails/v2@latest</code>.</li>
+    </ul>
+
+    <h2>Additional Information</h2>
+    <p>For more information about Wails, visit the official documentation: <a href="https://wails.io" target="_blank">https://wails.io</a></p>
+</body>
+</html>

@@ -1,0 +1,10 @@
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/target/
+**/target-win/
+**/output/
+**/cases/
+**/reports/
+**/*.log
+.DS_Store

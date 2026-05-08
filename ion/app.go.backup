@@ -1,0 +1,59 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"os/exec"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+type App struct {
+	ctx context.Context
+}
+
+func NewApp() *App {
+	return &App{}
+}
+
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+}
+
+// ProcessBackup is good for quick, small tasks
+func (a *App) ProcessBackup(path string) string {
+	cmd := exec.Command("./rust_core", "--path", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("Error: %s\nOutput: %s", err.Error(), string(out))
+	}
+	return string(out)
+}
+
+// StartExtraction is the "Pro" way for your 90GB backup
+func (a *App) StartExtraction(path string) {
+	go func() {
+		runtime.EventsEmit(a.ctx, "status", "Initializing Rust Core...")
+
+		cmd := exec.Command("./rust_core", "--path", path, "--json") // Assuming your Rust CLI has a --json flag
+
+		// This captures the output line-by-line instead of waiting for the end
+		stdout, _ := cmd.StdoutPipe()
+		cmd.Start()
+
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			// Send whatever the Rust CLI says directly to the Svelte UI
+			runtime.EventsEmit(a.ctx, "rust-logs", line)
+		}
+
+		cmd.Wait()
+		runtime.EventsEmit(a.ctx, "status", "Extraction Complete!")
+	}()
+}
+
+func (a *App) Greet(name string) string {
+	return fmt.Sprintf("Hello %s, STYGiON is ready.", name)
+}

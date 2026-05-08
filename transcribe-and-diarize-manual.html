@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iON Transcribe & Diarize Manual</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #161922;
+            --border: #2a2e3b;
+            --text: #c9cdd7;
+            --heading: #e6e9ef;
+            --accent: #58a6ff;
+            --code-bg: #1a1d26;
+            --success: #3fb950;
+            --warning: #d29922;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 3rem 1.5rem;
+        }
+        h1 {
+            color: var(--heading);
+            font-size: 2rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+            margin-bottom: 2rem;
+        }
+        h2 {
+            color: var(--heading);
+            font-size: 1.4rem;
+            margin-top: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        h3 {
+            color: var(--accent);
+            font-size: 1.1rem;
+            margin-top: 1.8rem;
+            margin-bottom: 0.6rem;
+        }
+        code, pre {
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+            background: var(--code-bg);
+            border-radius: 6px;
+        }
+        code {
+            padding: 0.2rem 0.4rem;
+            font-size: 0.9em;
+        }
+        pre {
+            padding: 1rem 1.2rem;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        pre code {
+            background: none;
+            padding: 0;
+        }
+        .note {
+            background: var(--surface);
+            border-left: 4px solid var(--accent);
+            padding: 1rem 1.2rem;
+            margin: 1.2rem 0;
+            border-radius: 0 6px 6px 0;
+        }
+        .warning {
+            border-left-color: var(--warning);
+        }
+        .success {
+            border-left-color: var(--success);
+        }
+        ul, ol {
+            padding-left: 1.5rem;
+        }
+        li { margin: 0.4rem 0; }
+        .step {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+        .step-number {
+            display: inline-block;
+            background: var(--accent);
+            color: #fff;
+            font-weight: bold;
+            width: 28px;
+            height: 28px;
+            line-height: 28px;
+            text-align: center;
+            border-radius: 50%;
+            margin-right: 0.6rem;
+            font-size: 0.9rem;
+        }
+        .file-tag {
+            background: #2d333b;
+            color: #adbac7;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>iON Transcribe & Diarize Manual</h1>
+        <p>
+            This guide covers the complete workflow for converting case video/audio into
+            time-stamped, speaker-labeled transcripts using <strong>OpenAI Whisper</strong>
+            and <strong>pyannote.audio</strong>.
+        </p>
+
+        <div class="note success">
+            <strong>Goal:</strong> Take any case media file (MP4, MOV, etc.) and produce a
+            transcript that identifies <em>who</em> spoke <em>when</em> and <em>what</em> they said.
+        </div>
+
+        <h2>Prerequisites</h2>
+        <ul>
+            <li>Python 3.8–3.12 installed (3.14 may lack PyTorch wheels)</li>
+            <li><code>ffmpeg</code> installed system-wide</li>
+            <li>Hugging Face account + access token</li>
+            <li>GPU recommended (AMD ROCm or NVIDIA CUDA). CPU works but is slow.</li>
+        </ul>
+
+        <div class="note warning">
+            <strong>Fish Shell Users:</strong> The standard <code>source venv/bin/activate</code>
+            is for Bash/Zsh. In Fish, use <code>source venv/bin/activate.fish</code> or run
+            everything inside a Bash subshell: <code>bash</code>.
+        </div>
+
+        <h2>Workflow Overview</h2>
+        <ol>
+            <li>Extract clean audio from video with <code>ffmpeg</code></li>
+            <li>Create and activate a Python virtual environment</li>
+            <li>Install Python dependencies</li>
+            <li>Authenticate with Hugging Face</li>
+            <li>Run Whisper transcription</li>
+            <li>Run pyannote speaker diarization</li>
+            <li>Align transcripts to speakers (optional advanced step)</li>
+        </ol>
+
+        <h2>Detailed Steps</h2>
+
+        <div class="step">
+            <h3><span class="step-number">1</span>Extract Audio from Video</h3>
+            <p>Convert the case video to a single-channel 16kHz WAV. This format is ideal for both Whisper and pyannote.</p>
+            <pre><code>ffmpeg -i input_video.mp4 -vn -acodec pcm_s16le -ar 16000 -ac 1 output_audio.wav</code></pre>
+            <table style="width:100%; margin-top:1rem; font-size:0.9rem;">
+                <tr><td><code>-vn</code></td><td>Discard video stream</td></tr>
+                <tr><td><code>-acodec pcm_s16le</code></td><td>16-bit PCM (lossless)</td></tr>
+                <tr><td><code>-ar 16000</code></td><td>16 kHz sample rate (required by Whisper)</td></tr>
+                <tr><td><code>-ac 1</code></td><td>Mono (single channel)</td></tr>
+            </table>
+        </div>
+
+        <div class="step">
+            <h3><span class="step-number">2</span>Create a Virtual Environment</h3>
+            <pre><code>python3 -m venv transcribe-env</code></pre>
+            <p>Activate it (choose your shell):</p>
+            <pre><code># Bash / Zsh
+source transcribe-env/bin/activate
+
+# Fish
+source transcribe-env/bin/activate.fish</code></pre>
+        </div>
+
+        <div class="step">
+            <h3><span class="step-number">3</span>Install Dependencies</h3>
+            <pre><code># Upgrade pip first
+pip install --upgrade pip
+
+# PyTorch (CPU build shown; swap for ROCm/CUDA if you have a GPU)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Core transcription & diarization libraries
+pip install pyannote.audio
+pip install openai-whisper
+
+# Hugging Face CLI (for authentication)
+pip install huggingface-hub</code></pre>
+            <div class="note warning">
+                <strong>AMD GPU:</strong> Replace the PyTorch line with the ROCm wheel:<br>
+                <code>pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2</code>
+            </div>
+        </div>
+
+        <div class="step">
+            <h3><span class="step-number">4</span>Authenticate with Hugging Face</h3>
+            <p>pyannote models require a Hugging Face token and acceptance of the model license.</p>
+            <ol>
+                <li>Sign up / log in at <a href="https://huggingface.co" style="color:var(--accent);">huggingface.co</a></li>
+                <li>Visit <code>pyannote/speaker-diarization-3.1</code> and accept the user agreement</li>
+                <li>Visit <code>pyannote/segmentation-3.0</code> and accept the user agreement (required dependency)</li>
+                <li>Visit <code>pyannote/speaker-diarization-community-1</code> and accept the user agreement (required dependency)</li>
+                <li>Generate an access token at <code>Settings &rarr; Access Tokens</code></li>
+            </ol>
+            <p>Then run:</p>
+            <pre><code>hf auth login</code></pre>
+            <p><em>Note: <code>huggingface-cli</code> is deprecated. Use <code>hf</code> instead.</em></p>
+            <p>Paste your token when prompted.</p>
+        </div>
+
+        <div class="step">
+            <h3><span class="step-number">5</span>Transcribe with Whisper</h3>
+            <p>Load a Whisper model and transcribe the extracted WAV.</p>
+            <pre><code>import whisper
+
+model = whisper.load_model("base")  # tiny | base | small | medium | large
+result = model.transcribe("output_audio.wav")
+
+for segment in result["segments"]:
+    start = segment["start"]
+    end   = segment["end"]
+    text  = segment["text"].strip()
+    print(f"[{start:>7.2f} - {end:>7.2f}] {text}")</code></pre>
+            <div class="note">
+                <strong>Model Sizes:</strong><br>
+                <code>tiny</code> = fastest, least accurate &nbsp;|&nbsp;
+                <code>base</code> = good for quick tests &nbsp;|&nbsp;
+                <code>large</code> = best accuracy, slowest, needs &gt;10 GB VRAM
+            </div>
+        </div>
+
+        <div class="step">
+            <h3><span class="step-number">6</span>Diarize with pyannote</h3>
+            <p>Identify speaker turns (who spoke when).</p>
+            <pre><code>from pyannote.audio import Pipeline
+
+pipeline = Pipeline.from_pretrained(
+    "pyannote/speaker-diarization-3.1"
+)
+
+diarization_output = pipeline("output_audio.wav")
+diarization = diarization_output.speaker_diarization
+
+for turn, _, speaker in diarization.itertracks(yield_label=True):
+    print(f"Speaker {speaker}: {turn.start:.1f}s - {turn.end:.1f}s")</code></pre>
+        </div>
+
+        <div class="step">
+            <h3><span class="step-number">7</span>Align Transcripts to Speakers (Optional)</h3>
+            <p>Combine Whisper word-level timestamps with pyannote speaker segments to label each sentence with a speaker.</p>
+            <pre><code>def get_speaker_at_time(timestamp, diarization):
+    for turn, _, speaker in diarization.itertracks(yield_label=True):
+        if turn.start &lt;= timestamp &lt;= turn.end:
+            return speaker
+    return "UNKNOWN"
+
+for segment in result["segments"]:
+    t = (segment["start"] + segment["end"]) / 2
+    speaker = get_speaker_at_time(t, diarization)
+    print(f"[{speaker}] {segment['text'].strip()}")</code></pre>
+            <div class="note">
+                For production-grade alignment consider <strong>WhisperX</strong> or
+                <strong>faster-whisper</strong> with word timestamps, which make mapping
+                words to speaker segments much more precise.
+            </div>
+        </div>
+
+        <h2>Full Example Script</h2>
+        <p>Save this as <span class="file-tag">transcribe_diarize.py</span> and run it inside the activated environment:</p>
+        <pre><code>#!/usr/bin/env python3
+import whisper
+from pyannote.audio import Pipeline
+
+AUDIO_FILE = "output_audio.wav"
+
+def main():
+    # 1. Transcribe
+    print("Loading Whisper model...")
+    model = whisper.load_model("base")
+    result = model.transcribe(AUDIO_FILE)
+
+    # 2. Diarize
+    print("Loading pyannote pipeline...")
+    pipeline = Pipeline.from_pretrained(
+        "pyannote/speaker-diarization-3.1"
+    )
+    diarization = pipeline(AUDIO_FILE)
+
+    # 3. Simple speaker alignment
+    def speaker_at(t):
+        for turn, _, spk in diarization.itertracks(yield_label=True):
+            if turn.start &lt;= t &lt;= turn.end:
+                return spk
+        return "UNKNOWN"
+
+    print("\n--- TRANSCRIPT ---\n")
+    for seg in result["segments"]:
+        t = (seg["start"] + seg["end"]) / 2
+        spk = speaker_at(t)
+        print(f"[{seg['start']:>7.2f}s - {seg['end']:>7.2f}s] {spk}: {seg['text'].strip()}")
+
+if __name__ == "__main__":
+    main()</code></pre>
+
+        <h2>Output Format</h2>
+        <p>Typical console output looks like:</p>
+        <pre><code>[   0.00s -    3.24s] SPEAKER_00: My name is Cody Redmond.
+[   3.40s -    7.10s] SPEAKER_01: Can you state the date for the record?
+[   7.20s -   10.55s] SPEAKER_00: Today is October first, twenty twenty-five.</code></pre>
+
+        <h2>Troubleshooting</h2>
+        <table style="width:100%; border-collapse:collapse; font-size:0.95rem;">
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:0.6rem 0; vertical-align:top; width:35%;"><strong>torch install fails</strong></td>
+                <td style="padding:0.6rem 0;">Your Python version may be too new (3.14). Install Python 3.11 via <code>pyenv</code> or <code>mise</code> and recreate the venv.</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:0.6rem 0; vertical-align:top;"><strong>HF 403 error</strong></td>
+                <td style="padding:0.6rem 0;">You have not accepted the pyannote model license on Hugging Face. Visit the model page and click "Access repository".</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:0.6rem 0; vertical-align:top;"><strong>Out of memory</strong></td>
+                <td style="padding:0.6rem 0;">Use a smaller Whisper model (<code>tiny</code> or <code>base</code>) or run on CPU by setting <code>DEVICE = "cpu"</code>.</td>
+            </tr>
+            <tr>
+                <td style="padding:0.6rem 0; vertical-align:top;"><strong>Diarization poor quality</strong></td>
+                <td style="padding:0.6rem 0;">Ensure audio is mono 16kHz. Crosstalk and heavy background noise reduce accuracy.</td>
+            </tr>
+        </table>
+
+        <h2>Hermes Agent — Automated Media Catalog & Transcription</h2>
+        <p>
+            Hermes is the iON agent responsible for collecting media metadata,
+            building a unified catalog, and conditionally running transcription
+            and speaker diarization based on assigned investigation contacts.
+        </p>
+        <p>Hermes runs <strong>after Charon</strong> and consumes evidence from:</p>
+        <ul>
+            <li><strong>Charon</strong> — photos, videos, screen recordings, live photos</li>
+            <li><strong>Echo</strong> — voicemail and audio recordings</li>
+            <li><strong>Cerberus</strong> — MMS/SMS attachments with linked contacts</li>
+        </ul>
+
+        <h3>When Transcription Runs</h3>
+        <div class="note">
+            Transcription and diarization are <strong>disabled by default</strong>.
+            They only activate when a case has contacts (phone numbers) assigned
+            for investigation via the case registry.
+        </div>
+        <p>When active, Hermes transcribes <em>only</em> media linked to those contacts:</p>
+        <ul>
+            <li>Voicemail from the target phone number(s)</li>
+            <li>MMS audio/video attachments sent to/from the target number(s)</li>
+            <li>Camera/screen recordings are cataloged but <em>not</em> auto-transcribed
+            unless explicitly matched to a contact</li>
+        </ul>
+
+        <h3>Running Hermes</h3>
+        <pre><code>minios hermes &lt;case_name&gt;</code></pre>
+        <p>Example:</p>
+        <pre><code>minios hermes pcr</code></pre>
+
+        <h3>Outputs</h3>
+        <p>All files are written to <code>evidence/hermes/</code> inside the case directory:</p>
+        <table style="width:100%; border-collapse:collapse; font-size:0.95rem;">
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:0.5rem 0;"><code>records.json</code></td>
+                <td style="padding:0.5rem 0;">Evidence records in iON unified format</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:0.5rem 0;"><code>media_catalog.json</code></td>
+                <td style="padding:0.5rem 0;">Complete media inventory with metadata, thumbnails, dates, sources</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:0.5rem 0;"><code>media_catalog.pdf</code></td>
+                <td style="padding:0.5rem 0;">Printable catalog report with emoji thumbnails and transcription status</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:0.5rem 0;"><code>transcripts/&lt;item_id&gt;/</code></td>
+                <td style="padding:0.5rem 0;">Per-item transcription output (JSON, merged text, diarization, PDF)</td>
+            </tr>
+        </table>
+
+        <h3>Assigning Investigation Contacts</h3>
+        <p>Contacts are managed through the case registry. Hermes reads the
+        <code>phone_numbers</code> list from <code>~/.iON/case_registry.json</code>.</p>
+        <pre><code>// Example registry entry for case "pcr"
+{
+  "cases": {
+    "pcr": {
+      "root": "/home/ghost/iON/cases/pcr",
+      "phone_numbers": ["15152038573", "15159967300"],
+      "contacts": {},
+      "device_phone_number": "5155555555"
+    }
+  }
+}</code></pre>
+        <p>When <code>phone_numbers</code> is empty, Hermes builds the catalog but skips transcription.
+        When populated, only media matching those numbers is processed.</p>
+
+        <h3>Catalog Item Schema</h3>
+        <pre><code>{
+  "id": "charon:802BF0C7-...",
+  "source": "Charon",
+  "media_type": "Video",
+  "mime_type": "video/mp4",
+  "filename": "IMG_1234.MP4",
+  "file_path": "/cases/pcr/backup/...",
+  "thumbnail_path": null,
+  "file_size": 558161,
+  "duration_seconds": 3.788,
+  "created_date": "2024-08-19T18:11:57+00:00",
+  "added_date": "2024-08-19T18:11:57+00:00",
+  "phone_number": "+15152038573",
+  "contact_name": "Cody Redmond",
+  "direction": "Received",
+  "is_transcribed": true,
+  "transcript_path": ".../transcript.json",
+  "merged_transcript_path": ".../merged.txt",
+  "pdf_report_path": ".../report.pdf",
+  "sha256": "a1b2c3..."
+}</code></pre>
+
+        <h2>Exporting to PDF</h2>
+        <p>To export the merged transcript to a printable PDF report using LibreOffice:</p>
+        <ol>
+            <li>Generate a styled HTML report from the merged transcript</li>
+            <li>Convert with LibreOffice headless mode:</li>
+        </ol>
+        <pre><code>libreoffice --headless --convert-to pdf --outdir output_dir/ report.html</code></pre>
+        <p>A sample Python script for generating the HTML report is included in the iON toolkit (<span class="file-tag">generate_pdf.py</span>).</p>
+
+        <footer style="margin-top:4rem; padding-top:2rem; border-top:1px solid var(--border); color:#8b949e; font-size:0.85rem;">
+            iON Data Management Systems &mdash; Internal workflow documentation.
+        </footer>
+    </div>
+</body>
+</html>
