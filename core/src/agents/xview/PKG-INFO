@@ -1,0 +1,4 @@
+Metadata-Version: 2.4 Name: xview-sqlite Version: 0.1.0 Summary: xview: SQLite reconnaissance and summarizer CLI. Author-email: Van Honey Ltd [iONdatasystems@leary.work](mailto:iONdatasystems@leary.work) License: Proprietary Requires-Python: \>=3.10 Description-Content-Type: text/plain Requires-Dist: cryptography\>=42.0.0
+
+Lightweight SQLite recon CLI used in Nemesis Engine; scans for databases, summarizes tables, and writes JSON/Markdown reports.
+

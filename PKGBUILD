@@ -1,11 +1,11 @@
 # Maintainer: Your Name <youremail@domain.com>
-pkgname=minios
+pkgname="iON-Data-Systems"
 pkgver=2.1.0
 pkgrel=1
 epoch=1
-pkgdesc="iOS forensic extraction and analysis toolkit"
+pkgdesc="iOS backup and analysis toolbox powered by the NEMESIS ENGINE"
 arch=('x86_64')
-url="https://github.com/ghost/iON"  # TODO: replace with actual URL
+url="https://github.com/ghost/iON-Data-Systems"  # TODO: replace with actual URL
 license=('MIT')
 depends=()
 makedepends=('cargo' 'rust')

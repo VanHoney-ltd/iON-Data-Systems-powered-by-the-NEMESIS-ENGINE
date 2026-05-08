@@ -1,0 +1,81 @@
+# MINiOS forensic extraction pipeline definition
+# Agents are run in dependency order. Optional agents that fail are skipped.
+
+[[step]]
+agent = "chronos"
+required = true
+description = "iOS backup discovery and validation"
+
+[[step]]
+agent = "helios"
+required = true
+depends_on = ["chronos"]
+description = "Backup decryption"
+
+# Core evidence agents — all depend on helios (decrypted backup)
+[[step]]
+agent = "vigil"
+required = false
+depends_on = ["helios"]
+description = "System artifact extraction"
+
+[[step]]
+agent = "echo"
+required = false
+depends_on = ["helios"]
+description = "Audio/voicemail extraction"
+
+[[step]]
+agent = "cerberus"
+required = false
+depends_on = ["helios"]
+description = "SMS/MMS/calls/voicemail/contacts extraction"
+
+[[step]]
+agent = "charon"
+required = false
+depends_on = ["helios"]
+description = "Photo and media extraction"
+
+[[step]]
+agent = "nyx"
+required = false
+depends_on = ["helios"]
+description = "Safari history, bookmarks, autofill"
+
+[[step]]
+agent = "obolus"
+required = false
+depends_on = ["helios"]
+description = "Notes extraction"
+
+[[step]]
+agent = "plutus"
+required = false
+depends_on = ["helios"]
+description = "Apple Wallet/financial data"
+
+[[step]]
+agent = "aether"
+required = false
+depends_on = ["charon"]
+description = "EXIF GPS extraction from photos"
+
+[[step]]
+agent = "atlas"
+required = false
+depends_on = ["helios"]
+description = "App-based location extraction"
+
+[[step]]
+agent = "orpheus"
+required = false
+depends_on = ["helios"]
+description = "Generic SQLite reconnaissance"
+
+# Analysis agents — depend on core extraction outputs
+[[step]]
+agent = "psyche"
+required = false
+depends_on = ["cerberus", "nyx"]
+description = "AI behavioral analysis"

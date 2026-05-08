@@ -1,0 +1,8 @@
+pyproject.toml
+tartarus.py
+tartarus_sqlite.egg-info/PKG-INFO
+tartarus_sqlite.egg-info/SOURCES.txt
+tartarus_sqlite.egg-info/dependency_links.txt
+tartarus_sqlite.egg-info/entry_points.txt
+tartarus_sqlite.egg-info/requires.txt
+tartarus_sqlite.egg-info/top_level.txt
