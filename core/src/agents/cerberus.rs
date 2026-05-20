@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 
 use crate::agents::cerberus_models::{ContactValueRecord, VoicemailRecord};
 use crate::agents::{Agent, AgentCtx};
@@ -666,6 +666,12 @@ struct CerberusThreadExport {
     html_path: String,
 }
 
+struct ContactMessageGroup<'a> {
+    key: String,
+    label: String,
+    messages: Vec<&'a CerberusMessageExport>,
+}
+
 fn extract_messages_and_attachments(
     ctx: &AgentCtx,
 ) -> Result<(Vec<EvidenceRecord>, Vec<EvidenceRecord>)> {
@@ -998,6 +1004,7 @@ fn write_cerberus_review_package(
     write_json(package_dir.join("messages.json"), messages)?;
     write_jsonl(package_dir.join("messages.jsonl"), messages)?;
     write_messages_csv(&package_dir.join("messages.csv"), messages)?;
+    write_message_html_archive(ctx, package_dir, messages)?;
 
     write_json(package_dir.join("attachments.json"), attachments)?;
     write_jsonl(package_dir.join("attachments.jsonl"), attachments)?;
@@ -1010,6 +1017,7 @@ fn write_cerberus_review_package(
         let html_path = thread_dir.join("thread.html");
         let html = build_thread_html(ctx.case.name(), thread_id, thread_messages);
         fs::write(&html_path, html)?;
+        let relative_html_path = format!("threads/{}/thread.html", safe_name(thread_id));
 
         thread_exports.push(CerberusThreadExport {
             thread_id: thread_id.clone(),
@@ -1027,7 +1035,7 @@ fn write_cerberus_review_package(
                 .and_then(|m| m.timestamp_utc.clone()),
             last_timestamp_utc: thread_messages.last().and_then(|m| m.timestamp_utc.clone()),
             participants: participants_for_thread(thread_messages),
-            html_path: html_path.display().to_string(),
+            html_path: relative_html_path,
         });
     }
 
@@ -1051,6 +1059,345 @@ fn write_cerberus_review_package(
     }
 
     Ok(())
+}
+
+fn write_message_html_archive(
+    ctx: &AgentCtx,
+    package_dir: &Path,
+    messages: &[CerberusMessageExport],
+) -> Result<()> {
+    let html_dir = package_dir.join("messages_html");
+    let contacts_dir = html_dir.join("contacts");
+    fs::create_dir_all(&contacts_dir)?;
+
+    let groups = group_messages_by_contact(messages);
+    write_message_html_index(ctx.case.name(), &html_dir, messages, &groups)?;
+    for group in &groups {
+        write_contact_message_html(ctx.case.name(), package_dir, &contacts_dir, group)?;
+    }
+
+    ctx.log(&format!(
+        "Cerberus HTML contact archive written: {} messages across {} contact/conversation page(s)",
+        messages.len(),
+        groups.len()
+    ));
+
+    Ok(())
+}
+
+fn write_message_html_index(
+    case_name: &str,
+    html_dir: &Path,
+    messages: &[CerberusMessageExport],
+    groups: &[ContactMessageGroup<'_>],
+) -> Result<()> {
+    let contact_rows: String = groups
+        .iter()
+        .map(|group| {
+            let first_time = group
+                .messages
+                .first()
+                .and_then(|m| m.timestamp_utc.as_deref())
+                .unwrap_or("");
+            let last_time = group
+                .messages
+                .last()
+                .and_then(|m| m.timestamp_utc.as_deref())
+                .unwrap_or("");
+            let attachment_count: usize = group.messages.iter().map(|m| m.attachment_count).sum();
+            format!(
+                r#"<tr>
+  <td><a href="contacts/{file}.html">{label}</a></td>
+  <td>{count}</td>
+  <td>{attachments}</td>
+  <td>{first}</td>
+  <td>{last}</td>
+</tr>"#,
+                file = escape_html(&safe_name(&group.key)),
+                label = escape_html(&group.label),
+                count = group.messages.len(),
+                attachments = attachment_count,
+                first = escape_html(first_time),
+                last = escape_html(last_time)
+            )
+        })
+        .collect();
+    let first_time = messages
+        .first()
+        .and_then(|m| m.timestamp_utc.as_deref())
+        .unwrap_or("");
+    let last_time = messages
+        .last()
+        .and_then(|m| m.timestamp_utc.as_deref())
+        .unwrap_or("");
+    let html = format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cerberus Message HTML Archive - {case}</title>
+<style>{style}</style>
+</head>
+<body>
+<header>
+  <h1>Cerberus Contact Message Archive</h1>
+  <p>Case: <strong>{case}</strong> | Messages: <strong>{count}</strong> | Contacts/conversations: <strong>{contact_count}</strong> | Range: {first} to {last}</p>
+</header>
+<main>
+  <section class="panel">
+    <h2>Select Contact</h2>
+    <p class="hint">Open a contact/conversation to view the complete linked message record for that contact only. No page contains the entire case message corpus.</p>
+    <table>
+      <thead><tr><th>Contact / Conversation</th><th>Messages</th><th>Attachments</th><th>First</th><th>Last</th></tr></thead>
+      <tbody>{contact_rows}</tbody>
+    </table>
+  </section>
+</main>
+</body>
+</html>"#,
+        case = escape_html(case_name),
+        count = messages.len(),
+        contact_count = groups.len(),
+        first = escape_html(first_time),
+        last = escape_html(last_time),
+        contact_rows = contact_rows,
+        style = message_archive_css()
+    );
+    fs::write(html_dir.join("index.html"), html)?;
+    Ok(())
+}
+
+fn write_contact_message_html(
+    case_name: &str,
+    package_dir: &Path,
+    contacts_dir: &Path,
+    group: &ContactMessageGroup<'_>,
+) -> Result<()> {
+    let path = contacts_dir.join(format!("{}.html", safe_name(&group.key)));
+    let mut file = BufWriter::new(fs::File::create(&path)?);
+    write_message_doc_start(
+        &mut file,
+        &format!("Messages - {}", group.label),
+        case_name,
+        group.messages.len(),
+        None,
+        "../index.html",
+    )?;
+    for message in &group.messages {
+        write_message_article(&mut file, package_dir, "../../", message)?;
+    }
+    write_message_doc_end(&mut file)?;
+    Ok(())
+}
+
+fn group_messages_by_contact(messages: &[CerberusMessageExport]) -> Vec<ContactMessageGroup<'_>> {
+    let mut grouped: BTreeMap<String, ContactMessageGroup<'_>> = BTreeMap::new();
+    for msg in messages {
+        let key = contact_group_key(msg);
+        let label = contact_group_label(msg);
+        grouped
+            .entry(key.clone())
+            .or_insert_with(|| ContactMessageGroup {
+                key,
+                label,
+                messages: Vec::new(),
+            })
+            .messages
+            .push(msg);
+    }
+    let mut groups: Vec<_> = grouped.into_values().collect();
+    groups.sort_by(|a, b| {
+        b.messages
+            .len()
+            .cmp(&a.messages.len())
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    groups
+}
+
+fn contact_group_key(msg: &CerberusMessageExport) -> String {
+    if !msg.handle.trim().is_empty() {
+        return format!("handle:{}", msg.handle.trim());
+    }
+    if let Some(identifier) = msg
+        .chat_identifier
+        .as_deref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        return format!("chat_identifier:{}", identifier.trim());
+    }
+    if let Some(name) = msg
+        .chat_display_name
+        .as_deref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        return format!("chat_display:{}", name.trim());
+    }
+    format!("thread:{}", msg.thread_id)
+}
+
+fn contact_group_label(msg: &CerberusMessageExport) -> String {
+    if let Some(name) = msg
+        .chat_display_name
+        .as_deref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        if !msg.handle.trim().is_empty() {
+            return format!("{} ({})", name.trim(), msg.handle.trim());
+        }
+        return name.trim().to_string();
+    }
+    if let Some(identifier) = msg
+        .chat_identifier
+        .as_deref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        return identifier.trim().to_string();
+    }
+    if !msg.handle.trim().is_empty() {
+        return msg.handle.trim().to_string();
+    }
+    msg.thread_id.clone()
+}
+
+fn write_message_doc_start<W: Write>(
+    file: &mut W,
+    title: &str,
+    case_name: &str,
+    message_count: usize,
+    page_label: Option<&str>,
+    home_link: &str,
+) -> Result<()> {
+    write!(
+        file,
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>{style}</style>
+</head>
+<body>
+<header>
+  <h1>{title}</h1>
+  <p>Case: <strong>{case}</strong> | Messages: <strong>{count}</strong>{page}</p>
+  <p><a href="{home}">Back to Cerberus index</a></p>
+</header>
+<main>
+"#,
+        title = escape_html(title),
+        style = message_archive_css(),
+        case = escape_html(case_name),
+        count = message_count,
+        page = page_label
+            .map(|v| format!(" | {}", escape_html(v)))
+            .unwrap_or_default(),
+        home = escape_html(home_link)
+    )?;
+    Ok(())
+}
+
+fn write_message_doc_end<W: Write>(file: &mut W) -> Result<()> {
+    write!(file, "</main>\n</body>\n</html>\n")?;
+    Ok(())
+}
+
+fn write_message_article<W: Write>(
+    file: &mut W,
+    package_dir: &Path,
+    up_prefix: &str,
+    msg: &CerberusMessageExport,
+) -> Result<()> {
+    let text = msg.text.as_deref().unwrap_or("");
+    let subject = msg.subject.as_deref().unwrap_or("");
+    let attachments = if msg.attachment_export_paths.is_empty() {
+        String::new()
+    } else {
+        let items: String = msg
+            .attachment_export_paths
+            .iter()
+            .zip(
+                msg.attachment_mime_types
+                    .iter()
+                    .chain(std::iter::repeat(&String::new())),
+            )
+            .map(|(path, mime)| archive_attachment_html(package_dir, up_prefix, path, mime))
+            .collect();
+        format!(r#"<div class="attachments">{}</div>"#, items)
+    };
+    write!(
+        file,
+        r#"<article class="message {dir}" id="msg-{id}">
+  <div class="meta">
+    <span>{time}</span>
+    <span>{direction}</span>
+    <span>{handle}</span>
+    <span>{service}</span>
+    <span>thread: {thread}</span>
+    <span>id: {id}</span>
+  </div>
+  {subject}
+  <div class="body">{text}</div>
+  {attachments}
+</article>
+"#,
+        dir = if msg.direction == "Sent" {
+            "sent"
+        } else {
+            "received"
+        },
+        id = msg.message_id,
+        time = escape_html(msg.timestamp_utc.as_deref().unwrap_or("")),
+        direction = escape_html(&msg.direction),
+        handle = escape_html(&msg.handle),
+        service = escape_html(&msg.service),
+        thread = escape_html(&msg.thread_id),
+        subject = if subject.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<div class="subject">{}</div>"#, escape_html(subject))
+        },
+        text = escape_html(text).replace('\n', "<br>"),
+        attachments = attachments
+    )?;
+    Ok(())
+}
+
+fn archive_attachment_html(package_dir: &Path, up_prefix: &str, path: &str, mime: &str) -> String {
+    let link = archive_relative_link(package_dir, up_prefix, path);
+    let label = escape_html(
+        Path::new(path)
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or(path),
+    );
+    if mime.starts_with("image/") && !mime.contains("heic") {
+        format!(
+            r#"<a class="attachment image" href="{link}"><img src="{link}" alt="{label}"><span>{label}</span></a>"#
+        )
+    } else {
+        format!(r#"<a class="attachment file" href="{link}">{label}</a>"#)
+    }
+}
+
+fn archive_relative_link(package_dir: &Path, up_prefix: &str, path: &str) -> String {
+    let path_ref = Path::new(path);
+    let relative = path_ref
+        .strip_prefix(package_dir)
+        .ok()
+        .map(|p| p.display().to_string().replace('\\', "/"))
+        .unwrap_or_else(|| path.to_string());
+    escape_html(&format!(
+        "{}{}",
+        up_prefix,
+        relative.trim_start_matches('/')
+    ))
+}
+
+fn message_archive_css() -> &'static str {
+    r#"body{font-family:Arial,Helvetica,sans-serif;margin:24px;color:#17212b;background:#f7f8fa}header{margin-bottom:18px}h1{font-size:22px;margin:0 0 8px}h2{font-size:16px}.panel{background:#fff;border:1px solid #d7dde6;border-radius:6px;padding:14px;margin:12px 0}.hint{color:#52606d}table{border-collapse:collapse;width:100%;background:#fff}td,th{border:1px solid #d7dde6;padding:7px;font-size:13px;text-align:left;vertical-align:top}th{background:#edf1f5}.pager{margin:0 0 14px}.pager a{display:inline-block;margin-right:8px}.message{background:#fff;border:1px solid #d7dde6;border-radius:6px;margin:10px 0;padding:10px;break-inside:avoid}.sent{border-left:5px solid #2563eb}.received{border-left:5px solid #16a34a}.meta{display:flex;flex-wrap:wrap;gap:10px;color:#52606d;font-size:12px;margin-bottom:8px}.subject{font-weight:bold;margin-bottom:8px}.body{white-space:pre-wrap;font-size:14px;line-height:1.45}.attachments{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:10px}.attachment{border:1px solid #e3e8ef;border-radius:4px;background:#fbfcfd;padding:6px;font-size:12px;color:#243b53;text-decoration:none}.attachment img{display:block;max-width:100%;max-height:240px;object-fit:contain;margin-bottom:4px}@media(max-width:800px){body{margin:12px}.meta{display:block}.meta span{display:block;margin:2px 0}td,th{font-size:12px}}@media print{body{background:#fff;margin:10mm}.message{page-break-inside:avoid}}"#
 }
 
 fn write_json<T: Serialize + ?Sized>(path: PathBuf, value: &T) -> Result<()> {
