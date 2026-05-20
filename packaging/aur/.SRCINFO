@@ -15,7 +15,7 @@ pkgbase = ion-nemesis-cli
 	optdepends = ollama: local LLM runtime for Psyche/Nemesis analysis
 	optdepends = python: transcription and diarization helper scripts
 	optdepends = ffmpeg: media probing and transcription preparation
-	source = ion-nemesis-cli::git+https://github.com/VanHoney-ltd/iON-Data-Systems-powered-by-the-NEMESIS-ENGINE.git
+	source = ion-nemesis-cli::git+https://github.com/VanHoney-ltd/iON-Data-Systems-powered-by-the-NEMESIS-ENGINE.git#branch=nemesis-cli-aur-ready
 	sha256sums = SKIP
 
 pkgname = ion-nemesis-cli
