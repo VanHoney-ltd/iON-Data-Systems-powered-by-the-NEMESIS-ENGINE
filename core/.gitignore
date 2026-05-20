@@ -1,0 +1,23 @@
+# Rust/Cargo
+/target/
+/target-win/
+**/*.rs.bk
+
+# Build artifacts (Windows)
+*.exe
+*.pdb
+*.dll
+*.lib
+*.exp
+*.d
+
+# Local outputs/logs
+/output/
+/cases/
+*.log
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+*.swp
+*~

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iON UI Component Checklist</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #11131a;
+      --panel: #181b24;
+      --panel-2: #202431;
+      --text: #eef2ff;
+      --muted: #aab2c8;
+      --line: #353b4d;
+      --accent: #68d391;
+      --field: #0d0f15;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.45;
+    }
+
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 24px;
+      padding-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin: 18px 0;
+      overflow: hidden;
+    }
+
+    .section h2 {
+      margin: 0;
+      padding: 14px 16px;
+      background: var(--panel-2);
+      border-bottom: 1px solid var(--line);
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .item {
+      display: grid;
+      grid-template-columns: minmax(180px, 280px) 1fr;
+      gap: 14px;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--line);
+      align-items: center;
+    }
+
+    .item:last-child {
+      border-bottom: 0;
+    }
+
+    .label {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    .url-line {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .blank {
+      min-height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--field);
+      padding: 6px 8px;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .notes {
+      margin-top: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .notes h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .note-line {
+      min-height: 38px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    @media print {
+      body {
+        background: #fff;
+        color: #111;
+      }
+
+      main {
+        max-width: none;
+        padding: 20px;
+      }
+
+      .section,
+      .notes {
+        break-inside: avoid;
+        background: #fff;
+        border-color: #999;
+      }
+
+      .section h2 {
+        background: #eee;
+        border-color: #999;
+      }
+
+      .blank {
+        background: #fff;
+        border-color: #999;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>iON Nemesis UI Component Checklist</h1>
+      <p class="subtitle">Paste the source URL or reference link for each React/Wails component candidate.</p>
+    </header>
+
+    <section class="section">
+      <h2>Case Picker</h2>
+      <div class="item"><div class="label"><input type="checkbox">Case list</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">New/import case button</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Last-run status</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Open case action</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="section">
+      <h2>Dashboard</h2>
+      <div class="item"><div class="label"><input type="checkbox">Agent status grid</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Evidence review summary</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Run-all progress timeline</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">High-priority alerts</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Case metadata panel</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="section">
+      <h2>Communications</h2>
+      <div class="item"><div class="label"><input type="checkbox">Contact list</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Conversation viewer</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Voicemail list</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Attachment/media preview</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Search/filter bar</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="section">
+      <h2>Location</h2>
+      <div class="item"><div class="label"><input type="checkbox">Map/timeline view</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Coordinate table</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">EXIF photo locations</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">App activity locations</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="section">
+      <h2>Media</h2>
+      <div class="item"><div class="label"><input type="checkbox">Media catalog grid</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Transcription queue</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Audio/video player</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Transcript viewer</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Speaker diarization panel</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="section">
+      <h2>Psyche</h2>
+      <div class="item"><div class="label"><input type="checkbox">Selectable contact list</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Action menu</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Analysis result panel</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Legal-language standardizer</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="section">
+      <h2>Reports/Documents</h2>
+      <div class="item"><div class="label"><input type="checkbox">Evidence packet builder</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Generated document list</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Export controls</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="section">
+      <h2>Real-Time Chat & Streaming</h2>
+      <div class="item"><div class="label"><input type="checkbox">Chat thread</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Streaming token output</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Tool-call status panel</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Model switch indicator</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="section">
+      <h2>Global Shell</h2>
+      <div class="item"><div class="label"><input type="checkbox">Sidebar navigation</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Top command bar</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Agent terminal/log pane</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Evidence record side panel</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+      <div class="item"><div class="label"><input type="checkbox">Keyboard shortcut palette</div><div class="url-line">URL to component <div class="blank" contenteditable="true"></div></div></div>
+    </section>
+
+    <section class="notes">
+      <h2>Design Notes</h2>
+      <div class="note-line" contenteditable="true"></div>
+      <div class="note-line" contenteditable="true"></div>
+      <div class="note-line" contenteditable="true"></div>
+      <div class="note-line" contenteditable="true"></div>
+      <div class="note-line" contenteditable="true"></div>
+    </section>
+  </main>
+</body>
+</html>

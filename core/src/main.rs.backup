@@ -1,0 +1,49 @@
+//! MINiOS — Unified forensic agent dispatcher.
+//!
+//! Usage: minios <agent> <case_name>
+//! Example: minios vigil my-case-001
+
+use anyhow::Result;
+use std::env;
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("MINiOS ERROR: {:#}", e);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 3 {
+        print_usage();
+        anyhow::bail!("No agent or case name specified");
+    }
+
+    let agent_name = &args[1];
+    let case_name = &args[2];
+
+    // Dispatch to the correct agent
+    minios::agents::dispatch(agent_name, case_name)?;
+
+    Ok(())
+}
+
+fn print_usage() {
+    eprintln!(
+        r#"
+MINiOS — Mobile iOS Forensic Extraction
+
+USAGE:
+    minios <agent> <case_name>
+
+AGENTS:
+    vigil    System-level artifact extraction
+    echo     Audio evidence (voicemail, recordings)
+
+EXAMPLE:
+    minios vigil my-case-001
+"#
+    );
+}
