@@ -21,7 +21,6 @@ pub mod nemesis;
 pub mod run_all;
 pub mod styg;
 pub mod ui;
-pub mod ui_core;
 
 use std::path::Path;
 
