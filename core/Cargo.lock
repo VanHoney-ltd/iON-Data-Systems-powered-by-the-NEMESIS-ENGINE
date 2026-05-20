@@ -1371,6 +1371,54 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b3f7cef34251886990511df1c61443aa928499d598a9473929ab5a90a527304"
 
 [[package]]
+name = "ion"
+version = "2.1.0"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "aes-kw",
+ "age",
+ "anyhow",
+ "base64 0.22.1",
+ "cc",
+ "chrono",
+ "clap",
+ "crc32fast",
+ "crossterm",
+ "csv",
+ "dirs",
+ "ed25519-dalek",
+ "filetime",
+ "flate2",
+ "html-escape",
+ "kamadak-exif",
+ "log",
+ "mime_guess",
+ "pbkdf2",
+ "plist",
+ "rand",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rpassword",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "strsim 0.11.1",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml 0.8.23",
+ "url",
+ "walkdir",
+ "zeroize",
+ "zip",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1445,7 +1493,6 @@ version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afc22eff61b133b115c6e8c74e818c628d6d5e7a502afea6f64dee076dd94326"
 dependencies = [
- "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -1504,54 +1551,6 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
-name = "minios"
-version = "2.1.0"
-dependencies = [
- "aes",
- "aes-gcm",
- "aes-kw",
- "age",
- "anyhow",
- "base64 0.22.1",
- "cc",
- "chrono",
- "clap",
- "crc32fast",
- "crossterm",
- "csv",
- "dirs",
- "ed25519-dalek",
- "filetime",
- "flate2",
- "html-escape",
- "kamadak-exif",
- "log",
- "mime_guess",
- "pbkdf2",
- "plist",
- "rand",
- "rayon",
- "regex",
- "reqwest",
- "rpassword",
- "rusqlite",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "strsim 0.11.1",
- "tar",
- "tempfile",
- "thiserror",
- "tokio",
- "toml 0.8.23",
- "url",
- "walkdir",
- "zeroize",
- "zip",
-]
 
 [[package]]
 name = "miniz_oxide"

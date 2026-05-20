@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
-use minios::case::Case;
-use minios::chronos::device::probe_live_status;
-use minios::chronos::{run_chronos, ChronosConfig};
+use ion::case::Case;
+use ion::chronos::device::probe_live_status;
+use ion::chronos::{run_chronos, ChronosConfig};
 use std::ffi::OsString;
 use std::io::{BufRead, IsTerminal, Read};
 use std::path::PathBuf;
@@ -211,19 +211,19 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     if cli.json {
-        minios::agents::set_json_streaming(true);
+        ion::agents::set_json_streaming(true);
     }
 
     match cli.command {
         Command::Agents(command) => run_agents_command(command),
-        Command::RunAll(arg) => minios::run_all::run(&arg.case),
+        Command::RunAll(arg) => ion::run_all::run(&arg.case),
         Command::Nemesis(command) => run_nemesis_command(command),
         Command::Device(command) => run_device_command(command),
         Command::Backup(command) => run_backup_command(command),
         Command::Psyche(command) => run_psyche_command(command),
         Command::Hermes(command) => run_hermes_command(command),
-        Command::EvidenceReview(arg) => minios::evidence_review::run(&arg.case),
-        Command::Serve(args) => minios::desktop_server::serve(&args.bind, &[]),
+        Command::EvidenceReview(arg) => ion::evidence_review::run(&arg.case),
+        Command::Serve(args) => ion::desktop_server::serve(&args.bind, &[]),
         Command::Llm(command) => run_llm_command(command),
         Command::Legacy(args) => run_legacy(args),
     }
@@ -232,7 +232,7 @@ fn run() -> Result<()> {
 fn run_agents_command(command: AgentsCommand) -> Result<()> {
     match command.command {
         AgentsSubcommand::List => {
-            for agent in minios::agents::get_agent_definitions() {
+            for agent in ion::agents::get_agent_definitions() {
                 println!(
                     "{:<14} {:<16} {}",
                     agent.slug, agent.category, agent.description
@@ -240,15 +240,15 @@ fn run_agents_command(command: AgentsCommand) -> Result<()> {
             }
             Ok(())
         }
-        AgentsSubcommand::Run { agent, case } => minios::agents::dispatch(&agent, &case),
+        AgentsSubcommand::Run { agent, case } => ion::agents::dispatch(&agent, &case),
     }
 }
 
 fn run_nemesis_command(command: NemesisCommand) -> Result<()> {
     match command.command {
-        NemesisSubcommand::Run(arg) => minios::run_all::run(&arg.case),
+        NemesisSubcommand::Run(arg) => ion::run_all::run(&arg.case),
         NemesisSubcommand::Pipeline => {
-            let runner = minios::nemesis::PipelineRunner::load()?;
+            let runner = ion::nemesis::PipelineRunner::load()?;
             for agent in runner.agents() {
                 if let Some(step) = runner.step_info(agent) {
                     let required = if step.required {
@@ -361,16 +361,16 @@ fn run_psyche_command(command: PsycheCommand) -> Result<()> {
             if let Some(limit) = limit {
                 std::env::set_var("PSYCHE_LLM_LIMIT", limit.to_string());
             }
-            minios::agents::dispatch("psyche", &case)
+            ion::agents::dispatch("psyche", &case)
         }
-        PsycheSubcommand::Tui(arg) => minios::agents::psyche::run_tui(&arg.case),
+        PsycheSubcommand::Tui(arg) => ion::agents::psyche::run_tui(&arg.case),
     }
 }
 
 fn run_hermes_command(command: HermesCommand) -> Result<()> {
     match command.command {
         HermesSubcommand::Transcribe { case, args } => {
-            minios::agents::hermes::run_transcription_command(&case, &args)
+            ion::agents::hermes::run_transcription_command(&case, &args)
         }
     }
 }
@@ -478,12 +478,12 @@ fn run_legacy(args: Vec<OsString>) -> Result<()> {
     let rest = args[2..].to_vec();
 
     match agent.as_str() {
-        "hermes-transcribe" => minios::agents::hermes::run_transcription_command(case, &rest),
-        "psyche-tui" => minios::agents::psyche::run_tui(case),
-        "evidence-review" => minios::evidence_review::run(case),
-        "run-all" => minios::run_all::run(case),
-        "desktop-serve" => minios::desktop_server::serve(case, &rest),
-        _ => minios::agents::dispatch(agent, case),
+        "hermes-transcribe" => ion::agents::hermes::run_transcription_command(case, &rest),
+        "psyche-tui" => ion::agents::psyche::run_tui(case),
+        "evidence-review" => ion::evidence_review::run(case),
+        "run-all" => ion::run_all::run(case),
+        "desktop-serve" => ion::desktop_server::serve(case, &rest),
+        _ => ion::agents::dispatch(agent, case),
     }
 }
 
