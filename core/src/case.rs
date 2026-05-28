@@ -427,11 +427,6 @@ fn locate_case_root(name: &str) -> Result<PathBuf> {
         }
     }
 
-    // Crate root if available
-    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
-        push_candidate(PathBuf::from(manifest_dir));
-    }
-
     // Common ghostdevops roots
     if let Some(home) = dirs::home_dir() {
         push_candidate(home.join("Documents").join("ghostdevops"));
