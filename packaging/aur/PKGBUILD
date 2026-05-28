@@ -62,8 +62,8 @@ package() {
   install -Dm755 "$srcdir/.pkg-target/core/release/minios-export" "$pkgdir/usr/bin/minios-export"
   install -Dm755 "$srcdir/.pkg-target/helios/release/helios" "$pkgdir/usr/bin/helios"
 
-  install -Dm644 "LICENSE.txt" "$pkgdir/usr/share/licenses/$pkgname/LICENSE.txt"
-  install -Dm644 "EULA.md" "$pkgdir/usr/share/doc/$pkgname/EULA.md"
+  install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
 
   _private_payload_guard
 }
