@@ -334,6 +334,7 @@ fn build_backup_file_index(case_root: &Path) -> HashMap<String, PathBuf> {
 fn generate_thumbnails(
     assets: &[AssetRecord],
     backup_index: &HashMap<String, PathBuf>,
+    case_root: &Path,
     thumbs_dir: &Path,
 ) -> HashMap<i64, PathBuf> {
     let mut thumb_map = HashMap::new();
@@ -341,7 +342,7 @@ fn generate_thumbnails(
     for asset in assets {
         let src_path = if let Some(path) = backup_index.get(&asset.filename.to_lowercase()) {
             path.clone()
-        } else if let Some(path) = resolve_asset_path(asset) {
+        } else if let Some(path) = resolve_asset_path(asset, case_root) {
             path
         } else {
             continue;
@@ -412,8 +413,7 @@ fn generate_thumbnails(
 }
 
 /// Fallback path resolution when backup index misses.
-fn resolve_asset_path(asset: &AssetRecord) -> Option<PathBuf> {
-    let case_root = PathBuf::from("/home/ghost/iON/cases/pcr");
+fn resolve_asset_path(asset: &AssetRecord, case_root: &Path) -> Option<PathBuf> {
     let backup_root = case_root.join("prepared").join("helios").join("full.styg");
 
     let fp = asset.file_path.as_ref()?;
@@ -462,7 +462,7 @@ fn generate_media_catalog(ctx: &AgentCtx, assets: &[AssetRecord]) -> Result<()> 
     fs::create_dir_all(&thumbs_dir)?;
 
     ctx.log("Charon: generating thumbnails...");
-    let thumb_map = generate_thumbnails(assets, &backup_index, &thumbs_dir);
+    let thumb_map = generate_thumbnails(assets, &backup_index, &ctx.case.root_path(), &thumbs_dir);
     ctx.log(&format!("Charon: generated {} thumbnails", thumb_map.len()));
 
     let chunks: Vec<&[AssetRecord]> = assets.chunks(CATALOG_CHUNK_SIZE).collect();
