@@ -1,118 +1,259 @@
 <script>
-	import logo from './assets/images/logo-universal.png'
-	import {Greet, ProcessBackup, StartExtraction} from '../wailsjs/go/main/App.js'
-	
-	let resultText = "Please enter your name below 👇"
-	let name
-	
-	// Agent execution state
+	import { onMount } from 'svelte'
+	import { EventsOn } from '../wailsjs/runtime/runtime.js'
+	import {
+		ListCases,
+		GetAgentCatalog,
+		GetCaseSummary,
+		CreateCaseFromBackup,
+		StartExtraction,
+		StopExtraction,
+		PullBackup,
+		DecryptBackup,
+		ListEvidenceTypes,
+		GetEvidenceSummary,
+		GetEvidenceRecords,
+		ExportEvidence
+	} from '../wailsjs/go/main/App.js'
+
+	import Sidebar from './components/Sidebar.svelte'
+	import TopBar from './components/TopBar.svelte'
+	import CaseWizard from './components/CaseWizard.svelte'
+	import CaseDashboard from './components/CaseDashboard.svelte'
+	import AcquireBackup from './components/AcquireBackup.svelte'
+	import HeliosDecrypt from './components/HeliosDecrypt.svelte'
+	import AgentCatalog from './components/AgentCatalog.svelte'
+	import RunMonitor from './components/RunMonitor.svelte'
+	import EvidenceExplorer from './components/EvidenceExplorer.svelte'
+	import DeviceManager from './components/DeviceManager.svelte'
+	import AppsViewer from './components/AppsViewer.svelte'
+	import HelpDrawer from './components/HelpDrawer.svelte'
+
+	// Navigation
+	let view = 'dashboard'
+	let viewHistory = ['dashboard']
+	let historyIndex = 0
+	let sidebarCollapsed = false
+	let mobileSidebarOpen = false
+	let showWizard = false
+	let helpOpen = false
+	let helpTopic = 'getting-started'
+
+	// Cases
+	let cases = []
+	let selectedCase = ''
+	let caseSummary = null
+
+	// Agents
+	let agentCatalog = []
+
+	// Run state
 	let isRunning = false
 	let currentAgent = ''
 	let currentCase = ''
+	let backupPassword = ''
+	let pulling = false
 	let logs = []
 	let progress = { step: 0, total: 0, label: '' }
+	let acquisitionProgress = { overallPercent: 0, filePercent: 0, label: '', raw: '', active: false }
 	let status = 'Ready'
-	
-	// Evidence viewing
-	let evidence = null
-	let evidenceLoaded = false
-	let evidenceError = ''
-	
-	// Available agents (from Rust core)
-	const agents = [
-		{ id: 'vigil', name: 'Vigil', description: 'System-level artifact extraction' },
-		{ id: 'echo', name: 'Echo', description: 'Audio evidence (voicemail, recordings)' },
-		{ id: 'hermes', name: 'Hermes', description: 'Media catalog, transcription & diarization' }
-		// Add more agents as needed
-	]
-	
-	// Available cases (from Rust core/cases directory)
-	const cases = [
-		{ id: 'my_case', name: 'My Case' },
-		{ id: 'PCR', name: 'PCR' },
-		{ id: 'test', name: 'Test' }
-		// In a real app, this would be dynamically loaded
-	]
-	
-	function greet() {
-		Greet(name).then(result => {
-			resultText = result
-			name = '' // Clear input
-		})
+
+	// Evidence
+	let evidenceAgents = []
+	let evidenceSummaries = {}
+	let evidenceRecords = {}
+	let activeEvidenceAgent = ''
+	let evidenceLoading = false
+
+	$: canGoBack = historyIndex > 0
+	$: canGoForward = historyIndex < viewHistory.length - 1
+
+	function pushView(v) {
+		if (view === v) return
+		view = v
+		showWizard = false
+		// Trim forward history and append new view.
+		viewHistory = viewHistory.slice(0, historyIndex + 1)
+		viewHistory.push(v)
+		historyIndex = viewHistory.length - 1
 	}
-	
-	async function runAgent() {
-		if (!currentAgent || !currentCase) {
-			alert('Please select both an agent and a case')
+
+	function goBack() {
+		if (historyIndex > 0) {
+			historyIndex--
+			view = viewHistory[historyIndex]
+			showWizard = false
+		}
+	}
+
+	function goForward() {
+		if (historyIndex < viewHistory.length - 1) {
+			historyIndex++
+			view = viewHistory[historyIndex]
+			showWizard = false
+		}
+	}
+
+	function toggleSidebar() {
+		mobileSidebarOpen = !mobileSidebarOpen
+		sidebarCollapsed = !sidebarCollapsed
+	}
+
+	function closeMobileSidebar() {
+		mobileSidebarOpen = false
+	}
+
+	function viewEvidence(agent = '') {
+		if (agent) {
+			activeEvidenceAgent = agent
+			if (agent !== 'cerberus') {
+				loadEvidence(agent, 1000, '')
+			}
+		}
+		pushView('evidence')
+	}
+
+	function selectEvidenceAgent(agent) {
+		activeEvidenceAgent = agent
+	}
+
+	async function loadCases() {
+		try {
+			const names = await ListCases()
+			cases = names.map(n => ({ id: n, name: n }))
+		} catch (e) {
+			addLog(`Failed to load cases: ${e}`)
+		}
+	}
+
+	async function loadCatalog() {
+		try {
+			agentCatalog = await GetAgentCatalog()
+		} catch (e) {
+			addLog(`Failed to load agent catalog: ${e}`)
+		}
+	}
+
+	async function loadCaseSummary(name) {
+		if (!name) {
+			caseSummary = null
 			return
 		}
-		
+		try {
+			caseSummary = await GetCaseSummary(name)
+			await loadEvidenceAgents(name)
+		} catch (e) {
+			caseSummary = null
+			addLog(`Failed to load case summary: ${e}`)
+		}
+	}
+
+	function selectCase(name) {
+		selectedCase = name
+		loadCaseSummary(name)
+		if (view === 'evidence') {
+			activeEvidenceAgent = ''
+			evidenceRecords = {}
+		}
+	}
+
+	async function handleCaseCreated(name) {
+		showWizard = false
+		await loadCases()
+		selectCase(name)
+		pushView('dashboard')
+	}
+
+	function handlePull(caseName) {
+		pulling = true
+		logs = []
+		acquisitionProgress = { overallPercent: 0, filePercent: 0, label: 'Starting backup...', raw: '', active: true }
+		status = 'Starting backup acquisition...'
+		PullBackup(caseName)
+	}
+
+	function handleDecrypt(caseName, backupPath, password, profile) {
+		pulling = true
+		logs = []
+		status = 'Starting HELiOS decryption...'
+		DecryptBackup(caseName, backupPath, password, profile)
+	}
+
+	async function runAgent(agent) {
+		if (!selectedCase) {
+			alert('Select a case first')
+			return
+		}
+		currentAgent = agent
+		currentCase = selectedCase
 		isRunning = true
 		logs = []
 		progress = { step: 0, total: 0, label: 'Starting...' }
 		status = 'Running...'
-		
+		pushView('agents')
 		try {
-			const result = await StartExtraction(currentAgent, currentCase)
-			// Handle completion
-		} catch (error) {
-			addLog(`Error: ${error}`)
-			status = 'Error'
-		} finally {
+			await StartExtraction(agent, selectedCase, backupPassword)
+		} catch (e) {
+			addLog(`Start error: ${e}`)
 			isRunning = false
 		}
 	}
-	
-	function getStatusColor() {
-		if (status === 'Running...') return '#ff9f1c';
-		if (status === 'Extraction Complete!') return '#2ec4b6';
-		if (status === 'Error') return '#ff6b6b';
-		return '#a0a0a0';
+
+	function cancelRun() {
+		StopExtraction()
+		isRunning = false
+		status = 'Cancelled'
 	}
-	
+
+	async function loadEvidenceAgents(name) {
+		try {
+			evidenceAgents = await ListEvidenceTypes(name)
+		} catch (e) {
+			evidenceAgents = []
+		}
+	}
+
+	async function loadEvidence(agent, limit, recordType = '') {
+		if (!selectedCase || !agent) return
+		activeEvidenceAgent = agent
+		evidenceLoading = true
+		try {
+			const [summary, records] = await Promise.all([
+				GetEvidenceSummary(selectedCase, agent),
+				GetEvidenceRecords(selectedCase, agent, recordType, limit)
+			])
+			evidenceSummaries = { ...evidenceSummaries, [agent]: summary }
+			evidenceRecords = { ...evidenceRecords, [agent]: records }
+		} catch (e) {
+			addLog(`Failed to load evidence: ${e}`)
+		} finally {
+			evidenceLoading = false
+		}
+	}
+
+	async function exportEvidence(format) {
+		if (!selectedCase || !activeEvidenceAgent) return
+		try {
+			const path = await ExportEvidence(selectedCase, activeEvidenceAgent, format)
+			addLog(`Export ready: ${path}`)
+			alert(`Export saved to:\n${path}`)
+		} catch (e) {
+			addLog(`Export failed: ${e}`)
+		}
+	}
+
 	function addLog(message) {
 		const timestamp = new Date().toLocaleTimeString()
 		logs = [...logs, `[${timestamp}] ${message}`]
-		// Keep only last 100 logs
-		if (logs.length > 100) {
-			logs = logs.slice(-100)
-		}
+		if (logs.length > 500) logs = logs.slice(-500)
 	}
-	
-	async function loadEvidence() {
-		if (!currentCase) {
-			alert('Please select a case')
-			return
-		}
-		
-		evidenceLoaded = false
-		evidenceError = ''
-		
-		try {
-			// In a real implementation, we'd read from the filesystem
-			// For now, we'll simulate loading evidence
-			const evidencePath = `/home/ghost/iON/core/cases/${currentCase}/evidence/${currentAgent.toLowerCase()}/media_catalog.json`
-			
-			// This would typically be done through a Wails binding
-			// For demo purposes, we'll show a placeholder
-			evidence = {
-				message: `Evidence for ${currentAgent} on case ${currentCase}`,
-				path: evidencePath,
-				loadedAt: new Date().toISOString()
-			}
-			evidenceLoaded = true
-		} catch (error) {
-			evidenceError = `Failed to load evidence: ${error}`
-		}
-	}
-	
-	// Event listeners for Wails events
+
 	function setupEventListeners() {
-		window.go.main?.WebviewWindow?.on('log', (payload) => {
+		const offLog = EventsOn('log', (payload) => {
 			addLog(typeof payload === 'string' ? payload : JSON.stringify(payload))
 		})
-		
-		window.go.main?.WebviewWindow?.on('progress', (payload) => {
+
+		const offProgress = EventsOn('progress', (payload) => {
 			if (typeof payload === 'object' && payload !== null) {
 				progress = {
 					step: payload.step || 0,
@@ -121,506 +262,253 @@
 				}
 			}
 		})
-		
-		window.go.main?.WebviewWindow?.on('status', (payload) => {
-			status = typeof payload === 'string' ? payload : 'Ready'
-			if (status === 'Extraction Complete!' || status === 'Ready') {
-				isRunning = false
+
+		const offAcquisitionProgress = EventsOn('acquisition-progress', (payload) => {
+			if (typeof payload === 'object' && payload !== null) {
+				acquisitionProgress = {
+					overallPercent: Math.max(0, Math.min(100, payload.overallPercent ?? 0)),
+					filePercent: Math.max(0, Math.min(100, payload.filePercent ?? 0)),
+					label: payload.label || 'Backup running',
+					raw: payload.raw || '',
+					active: true
+				}
 			}
 		})
+
+		const offStatus = EventsOn('status', (payload) => {
+			status = typeof payload === 'string' ? payload : 'Ready'
+			if (status === 'Extraction Complete!') {
+				isRunning = false
+				loadCaseSummary(selectedCase)
+			}
+			if (typeof status === 'string' && status.startsWith('Error:')) {
+				isRunning = false
+				pulling = false
+				acquisitionProgress = { ...acquisitionProgress, active: false }
+			}
+			if (status === 'Backup acquisition complete!') {
+				pulling = false
+				acquisitionProgress = { ...acquisitionProgress, overallPercent: 100, filePercent: 100, label: 'Backup acquisition complete', active: false }
+			}
+		})
+
+		const offCaseCreated = EventsOn('case-created', async (name) => {
+			await loadCases()
+			selectCase(name)
+		})
+
+		return () => {
+			offLog()
+			offProgress()
+			offAcquisitionProgress()
+			offStatus()
+			offCaseCreated()
+		}
 	}
-	
-	// Initialize event listeners when component mounts
-	import { onMount } from 'svelte'
+
+	function openHelp(topic = 'getting-started') {
+		helpTopic = topic
+		helpOpen = true
+	}
+
 	onMount(() => {
-		setupEventListeners()
+		loadCases()
+		loadCatalog()
+		return setupEventListeners()
 	})
 </script>
 
-<main>
-	<header>
-		<img alt="Wails logo" id="logo" src="{logo}">
-		<h1>iON Forensic Console</h1>
-	</header>
-	
-	<div class="tabs">
-		<button class="tab active" onclick="document.getElementById('agent-tab').style.display='block'; document.getElementById('evidence-tab').style.display='none'; this.classList.add('active'); document.querySelector('.tab:nth-child(2)').classList.remove('active')">
-			Run Agents
-		</button>
-		<button class="tab" onclick="document.getElementById('evidence-tab').style.display='block'; document.getElementById('agent-tab').style.display='none'; this.classList.add('active'); document.querySelector('.tab:nth-child(1)').classList.remove('active')">
-			View Evidence
-		</button>
+<div class="app" class:sidebar-collapsed={sidebarCollapsed}>
+	{#if mobileSidebarOpen}
+		<button class="mobile-sidebar-overlay" type="button" aria-label="Close sidebar" on:click={closeMobileSidebar}></button>
+	{/if}
+
+	<Sidebar
+		view={view}
+		setView={pushView}
+		selectedCase={selectedCase}
+		cases={cases}
+		onCaseChange={selectCase}
+		onOpenHelp={openHelp}
+		collapsed={sidebarCollapsed}
+		mobileOpen={mobileSidebarOpen}
+		onToggle={toggleSidebar}
+		onNav={closeMobileSidebar}
+	/>
+
+	<div class="main-area">
+		<TopBar
+			view={view}
+			selectedCase={selectedCase}
+			cases={cases}
+			onCaseChange={selectCase}
+			canGoBack={canGoBack}
+			canGoForward={canGoForward}
+			onBack={goBack}
+			onForward={goForward}
+			onToggleSidebar={toggleSidebar}
+			onOpenHelp={openHelp}
+		/>
+
+		<main class="content">
+			{#if showWizard}
+				<CaseWizard
+					onCreated={handleCaseCreated}
+					onCancel={() => showWizard = false}
+				/>
+			{:else if view === 'dashboard'}
+				<CaseDashboard
+					selectedCase={selectedCase}
+					summary={caseSummary}
+					summaries={evidenceSummaries}
+					onRunAgent={runAgent}
+					onCreateCase={() => showWizard = true}
+					onViewEvidence={(agent) => viewEvidence(agent)}
+				/>
+			{:else if view === 'acquire'}
+				<AcquireBackup
+					pulling={pulling}
+					status={status}
+					logs={logs}
+					progress={acquisitionProgress}
+					onPull={handlePull}
+				/>
+			{:else if view === 'decrypt'}
+				<HeliosDecrypt
+					pulling={pulling}
+					status={status}
+					logs={logs}
+					onDecrypt={handleDecrypt}
+				/>
+			{:else if view === 'agents'}
+				<div class="agents-view">
+					<AgentCatalog
+						agents={agentCatalog}
+						selectedCase={selectedCase}
+						bind:backupPassword={backupPassword}
+						onRun={runAgent}
+						onOpenHelp={openHelp}
+					/>
+					<RunMonitor
+						agent={currentAgent}
+						caseName={currentCase}
+						running={isRunning}
+						status={status}
+						progress={progress}
+						logs={logs}
+						onCancel={cancelRun}
+						onViewEvidence={() => pushView('evidence')}
+					/>
+				</div>
+			{:else if view === 'devices'}
+				<DeviceManager onOpenHelp={openHelp} />
+			{:else if view === 'apps'}
+				<AppsViewer selectedCase={selectedCase} onOpenHelp={openHelp} />
+			{:else if view === 'evidence'}
+				<EvidenceExplorer
+					selectedCase={selectedCase}
+					evidenceAgents={evidenceAgents}
+					summaries={evidenceSummaries}
+					records={evidenceRecords}
+					activeAgent={activeEvidenceAgent}
+					onSelectAgent={selectEvidenceAgent}
+					onLoadEvidence={loadEvidence}
+					onExport={exportEvidence}
+					loading={evidenceLoading}
+					onOpenHelp={openHelp}
+				/>
+			{:else if view === 'reports'}
+				<div class="placeholder">
+					<h2>Reports</h2>
+					<p>Go to <strong>Evidence</strong> and use the CSV / JSON / PDF export buttons to generate reports.</p>
+					<button class="btn-primary" on:click={() => pushView('evidence')}>Open Evidence</button>
+				</div>
+			{:else if view === 'help'}
+				<div class="placeholder">
+					<h2>Help</h2>
+					<p>Click the <strong>Need help?</strong> button in the sidebar or the <strong>Help</strong> link on any agent card.</p>
+				</div>
+			{/if}
+		</main>
 	</div>
-	
-	<!-- Agent Execution Tab -->
-	<section id="agent-tab" class="tab-content">
-		<div class="agent-panel">
-			<h2>Run Forensic Agent</h2>
-			
-			<div class="form-group">
-				<label for="agent-select">Select Agent:</label>
-				<select id="agent-select" bind:value={currentAgent}>
-					<option value="">-- Select Agent --</option>
-					{#each agents as agentItem}
-						<option value={agentItem.id}>{agentItem.name} - {agentItem.description}</option>
-					{/each}
-				</select>
-			</div>
-			
-			<div class="form-group">
-				<label for="case-select">Select Case:</label>
-				<select id="case-select" bind:value={currentCase}>
-					<option value="">-- Select Case --</option>
-					{#each cases as caseItem}
-						<option value={caseItem.id}>{caseItem.name}</option>
-					{/each}
-				</select>
-			</div>
-			
-			<div class="form-group">
-				<button 
-					class="btn-primary" 
-					on:click={runAgent}
-					disabled={isRunning || !currentAgent || !currentCase}
-				>
-					{#if isRunning}
-						Stopping...
-					{:else}
-						Run Agent
-					{/if}
-				</button>
-			</div>
-			
-			<div class="status-bar">
-				<span class="status-label">Status:</span>
-				<span class="status-value" style="color: {getStatusColor()};">{status}</span>
-			</div>
-			
-			{#if progress.total > 0}
-				<div class="progress-bar">
-					<div 
-						class="progress-fill" 
-						style="width: {(progress.step / progress.total * 100)}%"
-					></div>
-					<span class="progress-text">
-						{progress.label} ({progress.step}/{progress.total})
-					</span>
-				</div>
-			{/if}
-		</div>
-		
-		<div class="logs-panel">
-			<h2>Execution Logs</h2>
-			<div class="logs-container">
-				{#each logs as log, index}
-					<div class="log-entry">{log}</div>
-				{/each}
-				{#if logs.length === 0 && !isRunning}
-					<div class="log-entry empty">No logs yet. Run an agent to see output here.</div>
-				{/if}
-			</div>
-		</div>
-	</section>
-	
-	<!-- Evidence Viewing Tab -->
-	<section id="evidence-tab" class="tab-content" style="display: none;">
-		<div class="evidence-panel">
-			<h2>View Processed Evidence</h2>
-			
-			<div class="form-group">
-				<label for="evidence-case-select">Select Case:</label>
-				<select id="evidence-case-select" bind:value={currentCase}>
-					<option value="">-- Select Case --</option>
-					{#each cases as caseItem}
-						<option value={caseItem.id}>{caseItem.name}</option>
-					{/each}
-				</select>
-			</div>
-			
-			<div class="form-group">
-				<label for="evidence-agent-select">Select Agent:</label>
-				<select id="evidence-agent-select" bind:value={currentAgent}>
-					<option value="">-- Select Agent --</option>
-					{#each agents as agent}
-						<option value={agent.id}>{agent.name}</option>
-					{/each}
-				</select>
-			</div>
-			
-			<div class="form-group">
-				<button 
-					class="btn-secondary" 
-					on:click={loadEvidence}
-					disabled={!currentAgent || !currentCase}
-				>
-					Load Evidence
-				</button>
-			</div>
-			
-			{#if evidenceLoaded}
-				<div class="evidence-viewer">
-					<h3>Evidence Results</h3>
-					<div class="evidence-content">
-						<pre>{JSON.stringify(evidence, null, 2)}</pre>
-					</div>
-				</div>
-			{:else if evidenceError}
-				<div class="evidence-error">
-					<h3>Error Loading Evidence</h3>
-					<p class="error-message">{evidenceError}</p>
-				</div>
-			{:else}
-				<div class="evidence-placeholder">
-					<p>Select an agent and case, then click "Load Evidence" to view processed results.</p>
-				</div>
-			{/if}
-		</div>
-	</section>
-</main>
+
+	<HelpDrawer
+		open={helpOpen}
+		topic={helpTopic}
+		onClose={() => helpOpen = false}
+		agents={agentCatalog}
+	/>
+</div>
 
 <style>
-	/* Reset and base styles */
-	* {
+	:global(body) {
 		margin: 0;
-		padding: 0;
-		box-sizing: border-box;
-	}
-	
-	body {
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-		background-color: #0f1419;
-		color: #e0e0e0;
-		line-height: 1.6;
-	}
-	
-	main {
-		max-width: 1200px;
-		margin: 0 auto;
-		padding: 20px;
-		min-height: 100vh;
-	}
-	
-	header {
-		text-align: center;
-		padding: 20px 0;
-		border-bottom: 1px solid #2c3e50;
-		margin-bottom: 30px;
-	}
-	
-	#logo {
-		width: 80px;
-		height: 80px;
-		margin-bottom: 15px;
-	}
-	
-	h1 {
-		color: #4cc9f0;
-		font-size: 2.2rem;
-		margin-bottom: 10px;
-	}
-	
-	/* Tabs */
-	.tabs {
-		display: flex;
-		border-bottom: 2px solid #2c3e50;
-		margin-bottom: 30px;
-	}
-	
-	.tab {
-		padding: 12px 24px;
-		background-color: #1a252f;
-		border: none;
-		color: #a0a0a0;
-		cursor: pointer;
-		font-size: 1rem;
-		transition: all 0.3s ease;
-		position: relative;
-		overflow: hidden;
-	}
-	
-	.tab.active {
-		background-color: #0f1419;
-		color: #4cc9f0;
-		border-bottom: 3px solid #4cc9f0;
-	}
-	
-	.tab:hover:not(.active) {
-		background-color: #2c3e50;
-		color: #ffffff;
-	}
-	
-	/* Tab content */
-	.tab-content {
-		animation: fadeIn 0.3s ease;
-	}
-	
-	@keyframes fadeIn {
-		from { opacity: 0; }
-		to { opacity: 1; }
-	}
-	
-	/* Panels */
-	.agent-panel, .logs-panel, .evidence-panel {
-		background-color: #1a252f;
-		border-radius: 8px;
-		padding: 20px;
-		margin-bottom: 20px;
-		box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-	}
-	
-	h2 {
-		color: #4cc9f0;
-		margin-bottom: 20px;
-		padding-bottom: 10px;
-		border-bottom: 1px solid #2c3e50;
-		font-size: 1.5rem;
-	}
-	
-	/* Form elements */
-	.form-group {
-		margin-bottom: 15px;
-	}
-	
-	label {
-		display: block;
-		margin-bottom: 8px;
-		font-weight: 600;
-		color: #a0a0a0;
-		font-size: 0.9rem;
-	}
-	
-	select {
-		width: 100%;
-		padding: 12px;
-		background-color: #2c3e50;
-		border: 1px solid #3d4a55;
-		border-radius: 4px;
-		color: #e0e0e0;
-		font-size: 1rem;
-		transition: border-color 0.3s ease;
-	}
-	
-	select:focus {
-		outline: none;
-		border-color: #4cc9f0;
-		box-shadow: 0 0 0 2px rgba(76, 201, 240, 0.2);
-	}
-	
-	select option {
-		background-color: #1a252f;
+		background: #0f1419;
 		color: #e0e0e0;
 	}
-	
-	/* Buttons */
-	.btn-primary, .btn-secondary {
-		padding: 12px 24px;
-		border: none;
-		border-radius: 4px;
-		font-size: 1rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all 0.3s ease;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-	}
-	
-	.btn-primary {
-		background-color: #4cc9f0;
-		color: #0f1419;
-	}
-	
-	.btn-primary:hover:not(:disabled) {
-		background-color: #5fd7ff;
-		transform: translateY(-2px);
-		box-shadow: 0 4px 8px rgba(76, 201, 240, 0.3);
-	}
-	
-	.btn-primary:disabled {
-		background-color: #555555;
-		color: #999999;
-		cursor: not-allowed;
-		transform: none;
-	}
-	
-	.btn-secondary {
-		background-color: #3d4a55;
-		color: #e0e0e0;
-		border: 1px solid #4cc9f0;
-	}
-	
-	.btn-secondary:hover:not(:disabled) {
-		background-color: #4cc9f0;
-		color: #0f1419;
-		transform: translateY(-2px);
-	}
-	
-	.btn-secondary:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	
-	/* Status bar */
-	.status-bar {
-		display: flex;
-		justify-content: space-between;
-		padding: 12px;
-		background-color: #2c3e50;
-		border-radius: 4px;
-		margin-top: 15px;
-		font-size: 0.9rem;
-	}
-	
-.status-label {
-	color: #a0a0a0;
-}
 
-.status-value {
-	font-weight: 600;
-}
-	
-	/* Progress bar */
-	.progress-bar {
-		width: 100%;
-		height: 8px;
-		background-color: #2c3e50;
-		border-radius: 4px;
+	.app {
+		display: flex;
+		height: 100vh;
 		overflow: hidden;
-		margin: 15px 0;
 	}
-	
-	.progress-fill {
-		height: 100%;
-		background: linear-gradient(90deg, #4cc9f0, #2ec4b6);
-		transition: width 0.3s ease;
+
+	.main-area {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
 	}
-	
-	.progress-text {
-		text-align: center;
-		margin-top: 8px;
-		font-size: 0.85rem;
-		color: #a0a0a0;
-	}
-	
-	/* Logs container */
-	.logs-container {
-		height: 300px;
-		background-color: #0f1419;
-		border: 1px solid #2c3e50;
-		border-radius: 4px;
-		padding: 12px;
+
+	.content {
+		flex: 1;
 		overflow-y: auto;
-		font-family: 'Courier New', Courier, monospace;
-		font-size: 0.85rem;
-		line-height: 1.4;
+		background: #0f1419;
 	}
-	
-	.log-entry {
-		padding: 4px 0;
-		border-bottom: 1px solid rgba(44, 62, 80, 0.2);
+
+	.mobile-sidebar-overlay {
+		display: none;
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.6);
+		z-index: 90;
+		border: none;
+		padding: 0;
+		margin: 0;
 	}
-	
-	.log-entry:last-child {
-		border-bottom: none;
-	}
-	
-	.log-entry.empty {
-		color: #777777;
-		font-style: italic;
-		text-align: center;
-		padding: 20px;
-	}
-	
-	/* Evidence viewer */
-	.evidence-viewer {
-		background-color: #0f1419;
-		border: 1px solid #2c3e50;
-		border-radius: 4px;
-		padding: 20px;
-		margin-top: 20px;
-	}
-	
-	.evidence-viewer h3 {
-		color: #4cc9f0;
-		margin-bottom: 15px;
-		padding-bottom: 10px;
-		border-bottom: 1px solid #2c3e50;
-	}
-	
-	.evidence-content {
-		max-height: 400px;
-		overflow-y: auto;
-		background-color: #1a252f;
-		padding: 15px;
-		border-radius: 4px;
-	}
-	
-	.evidence-content pre {
-		background-color: #0f1419;
-		padding: 15px;
-		border-radius: 4px;
-		overflow: auto;
-		color: #a0a0a0;
-		font-size: 0.85rem;
-	}
-	
-	.evidence-error {
-		background-color: #2c1a1a;
-		border: 1px solid #ff6b6b;
-		border-radius: 4px;
-		padding: 20px;
-		margin-top: 20px;
-		text-align: center;
-	}
-	
-	.error-message {
-		color: #ff6b6b;
-		font-weight: 600;
-	}
-	
-	.evidence-placeholder {
-		text-align: center;
-		padding: 40px;
-		color: #777777;
-		font-style: italic;
-	}
-	
-	/* Responsive design */
+
 	@media (max-width: 768px) {
-		main {
-			padding: 10px;
+		.mobile-sidebar-overlay {
+			display: block;
 		}
-		
-		header {
-			padding: 15px 0;
-		}
-		
-		h1 {
-			font-size: 1.8rem;
-		}
-		
-		.tabs {
-			flex-wrap: wrap;
-		}
-		
-		.tab {
-			padding: 10px 15px;
-			font-size: 0.9rem;
-		}
-		
-		.agent-panel, .logs-panel, .evidence-panel {
-			padding: 15px;
-			margin-bottom: 15px;
-		}
-		
-		.logs-container {
-			height: 200px;
-		}
-		
-		.status-bar {
-			flex-direction: column;
-			gap: 10px;
-			text-align: center;
-		}
+	}
+
+	.agents-view {
+		display: flex;
+		flex-direction: column;
+		gap: 20px;
+		padding-bottom: 40px;
+	}
+
+	.placeholder {
+		padding: 60px;
+		text-align: center;
+		color: #a0a0a0;
+	}
+
+	.placeholder h2 {
+		color: #4cc9f0;
+	}
+
+	.btn-primary {
+		padding: 12px 24px;
+		background: #4cc9f0;
+		color: #0f1419;
+		border: none;
+		border-radius: 4px;
+		font-weight: 600;
+		cursor: pointer;
+		margin-top: 16px;
 	}
 </style>
-</script>

@@ -1,0 +1,12 @@
+{
+  "id": "ion-legal-paper",
+  "name": "iON Legal Paper",
+  "type": "html-page-art",
+  "entry": "/templates/ion-legal-paper/index.html",
+  "format": "letter",
+  "renderer": "browser-or-weasyprint",
+  "assets": [
+    "/templates/ion-legal-paper/iON-Legal-Paper_html_9c1fd761.png",
+    "/templates/ion-legal-paper/iON-Legal-Paper_html_dbaefd42.png"
+  ]
+}
