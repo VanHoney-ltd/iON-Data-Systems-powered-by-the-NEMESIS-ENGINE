@@ -16,11 +16,12 @@ name = "minios-export"
 path = "src/ui_export.rs"
 
 [[bin]]
-name = "pcr-packet"
-path = "src/pcr_packet.rs"
+name = "chronos"
+path = "src/chronos_cli.rs"
 
 [features]
 default = []
+afcclient = []
 
 [dependencies]
 aes = "0.8"

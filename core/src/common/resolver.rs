@@ -305,6 +305,10 @@ pub fn write_resolver_audit(case_root: &Path, record: &ResolverAuditRecord) -> R
 }
 
 pub fn discover_backup_root(case: &Case) -> Result<PathBuf> {
+    if let Some(helios_root) = case.discovered_helios_roots()?.into_iter().next() {
+        return Ok(helios_root);
+    }
+
     let chronos_manifest = case.root_path().join("chronos_manifest.json");
     if chronos_manifest.exists() {
         if let Ok(raw) = fs::read(&chronos_manifest) {

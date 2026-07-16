@@ -36,8 +36,7 @@ pub struct PipelineRunner {
 impl PipelineRunner {
     /// Load pipeline from embedded TOML.
     pub fn load() -> Result<Self> {
-        let pipeline: Pipeline = toml::from_str(PIPELINE_TOML)
-            .context("parsing pipeline.toml")?;
+        let pipeline: Pipeline = toml::from_str(PIPELINE_TOML).context("parsing pipeline.toml")?;
 
         let mut index = HashMap::new();
         for (i, step) in pipeline.step.iter().enumerate() {
@@ -52,7 +51,8 @@ impl PipelineRunner {
                 if !index.contains_key(dep) {
                     bail!(
                         "Step '{}' depends on '{}' which is not defined",
-                        step.agent, dep
+                        step.agent,
+                        dep
                     );
                 }
             }
@@ -61,7 +61,10 @@ impl PipelineRunner {
         // Topologically sort steps
         let sorted = topo_sort(&pipeline.step, &index)?;
 
-        Ok(Self { steps: sorted, index })
+        Ok(Self {
+            steps: sorted,
+            index,
+        })
     }
 
     /// Run the full pipeline against a case.
@@ -75,10 +78,7 @@ impl PipelineRunner {
             let deps_ok = step.depends_on.iter().all(|d| completed.contains(d));
             if !deps_ok {
                 if step.required {
-                    bail!(
-                        "Required step '{}' has unmet dependencies",
-                        step.agent
-                    );
+                    bail!("Required step '{}' has unmet dependencies", step.agent);
                 } else {
                     eprintln!("[NEMESIS] Skipping '{}' — dependencies not met", step.agent);
                     skipped.push(step.agent.clone());
@@ -95,10 +95,7 @@ impl PipelineRunner {
                 Err(e) => {
                     println!("FAILED: {}", e);
                     if step.required {
-                        bail!(
-                            "Required agent '{}' failed: {}",
-                            step.agent, e
-                        );
+                        bail!("Required agent '{}' failed: {}", step.agent, e);
                     }
                     failed.push((step.agent.clone(), format!("{}", e)));
                 }
@@ -166,10 +163,7 @@ fn run_agent(agent: &str, case_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn topo_sort(
-    steps: &[Step],
-    index: &HashMap<String, usize>,
-) -> Result<Vec<Step>> {
+fn topo_sort(steps: &[Step], index: &HashMap<String, usize>) -> Result<Vec<Step>> {
     // Kahn's algorithm
     let n = steps.len();
     let mut in_degree = vec![0; n];

@@ -159,6 +159,8 @@ pub struct ContactRecord {
     pub emails: Vec<String>,
     #[serde(default)]
     pub urls: Vec<String>,
+    #[serde(default)]
+    pub labeled_values: Vec<ContactValueRecord>,
     pub organization: Option<String>,
     pub note: Option<String>,
     pub birthday: Option<String>,
@@ -170,6 +172,17 @@ pub struct ContactRecord {
     pub blocked: bool,
     #[serde(default)]
     pub department: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactValueRecord {
+    pub contact_id: i64,
+    pub value_type: String,
+    pub value: String,
+    pub label: Option<String>,
+    pub identifier: Option<i64>,
+    pub guid: Option<String>,
+    pub is_voip_like: bool,
 }
 
 // ---------------------------------------------------------------------------

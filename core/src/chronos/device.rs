@@ -366,10 +366,7 @@ impl DeviceManager {
     }
 
     pub fn unmount_live_filesystem(&self, mount: &Path) -> Result<()> {
-        let fusermount = Command::new("fusermount")
-            .arg("-u")
-            .arg(mount)
-            .output();
+        let fusermount = Command::new("fusermount").arg("-u").arg(mount).output();
 
         let status_ok = match fusermount {
             Ok(output) if output.status.success() => true,
@@ -387,11 +384,10 @@ impl DeviceManager {
             )?;
             Ok(())
         } else {
-            Err(ChronosError::ToolExecutionFailed(format!(
-                "Failed to unmount {}",
-                mount.display()
-            ))
-            .into())
+            Err(
+                ChronosError::ToolExecutionFailed(format!("Failed to unmount {}", mount.display()))
+                    .into(),
+            )
         }
     }
 
@@ -489,7 +485,9 @@ fn discover_ifuse_mounts(mount_root: &Path) -> Vec<IfuseMount> {
             let path = entry.path();
             if path.is_dir() {
                 mounts.push(IfuseMount {
-                    udid: path.file_name().map(|value| value.to_string_lossy().to_string()),
+                    udid: path
+                        .file_name()
+                        .map(|value| value.to_string_lossy().to_string()),
                     mount_point: path,
                     filesystem: "ifuse".to_string(),
                 });
@@ -553,7 +551,11 @@ fn pairing_state_for_udid(udid: &str) -> (PairingState, Option<String>) {
         Ok(output) if output.status.success() => (PairingState::Paired, None),
         Ok(output) => {
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let detail = if detail.is_empty() { None } else { Some(detail) };
+            let detail = if detail.is_empty() {
+                None
+            } else {
+                Some(detail)
+            };
             (PairingState::Unpaired, detail)
         }
         Err(error) => (PairingState::Unknown, Some(error.to_string())),

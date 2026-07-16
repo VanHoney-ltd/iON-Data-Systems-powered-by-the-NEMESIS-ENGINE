@@ -192,8 +192,16 @@ pub fn apple_maps_history_target() -> KnownTarget {
         clean_file_name: "History.sqlite",
         sqlite_like: true,
         candidates: vec![
-            candidate("AppDomain-com.apple.Maps", "History.sqlite", CandidateKind::Primary),
-            candidate("AppDomainGroup-group.com.apple.Maps", "History.sqlite", CandidateKind::Alternate),
+            candidate(
+                "AppDomain-com.apple.Maps",
+                "History.sqlite",
+                CandidateKind::Primary,
+            ),
+            candidate(
+                "AppDomainGroup-group.com.apple.Maps",
+                "History.sqlite",
+                CandidateKind::Alternate,
+            ),
         ],
     }
 }
@@ -204,8 +212,16 @@ pub fn apple_maps_cloud_history_target() -> KnownTarget {
         clean_file_name: "CloudHistory.syncedDB",
         sqlite_like: true,
         candidates: vec![
-            candidate("AppDomain-com.apple.Maps", "CloudHistory.syncedDB", CandidateKind::Primary),
-            candidate("AppDomainGroup-group.com.apple.Maps", "CloudHistory.syncedDB", CandidateKind::Alternate),
+            candidate(
+                "AppDomain-com.apple.Maps",
+                "CloudHistory.syncedDB",
+                CandidateKind::Primary,
+            ),
+            candidate(
+                "AppDomainGroup-group.com.apple.Maps",
+                "CloudHistory.syncedDB",
+                CandidateKind::Alternate,
+            ),
         ],
     }
 }
@@ -217,7 +233,11 @@ pub fn apple_maps_geo_target() -> KnownTarget {
         sqlite_like: true,
         candidates: vec![
             candidate("AppDomain-com.apple.Maps", "geo.db", CandidateKind::Primary),
-            candidate("AppDomainGroup-group.com.apple.Maps", "geo.db", CandidateKind::Alternate),
+            candidate(
+                "AppDomainGroup-group.com.apple.Maps",
+                "geo.db",
+                CandidateKind::Alternate,
+            ),
         ],
     }
 }
@@ -228,9 +248,21 @@ pub fn google_maps_target() -> KnownTarget {
         clean_file_name: "Session.sqlite",
         sqlite_like: true,
         candidates: vec![
-            candidate("AppDomain-com.google.Maps", "Library/Application Support/GoogleMaps/Session.sqlite", CandidateKind::Primary),
-            candidate("AppDomain-com.google.Maps", "Library/Application Support/DataStore/Session.sqlite", CandidateKind::Alternate),
-            candidate("AppDomain-com.google.Maps", "Documents/OSCacheData", CandidateKind::Alternate),
+            candidate(
+                "AppDomain-com.google.Maps",
+                "Library/Application Support/GoogleMaps/Session.sqlite",
+                CandidateKind::Primary,
+            ),
+            candidate(
+                "AppDomain-com.google.Maps",
+                "Library/Application Support/DataStore/Session.sqlite",
+                CandidateKind::Alternate,
+            ),
+            candidate(
+                "AppDomain-com.google.Maps",
+                "Documents/OSCacheData",
+                CandidateKind::Alternate,
+            ),
         ],
     }
 }
@@ -241,9 +273,21 @@ pub fn snapchat_maps_target() -> KnownTarget {
         clean_file_name: "scmap.db",
         sqlite_like: true,
         candidates: vec![
-            candidate("AppDomain-com.toyopagroup.picaboo", "Documents/scmap.db", CandidateKind::Primary),
-            candidate("AppDomain-com.toyopagroup.picaboo", "scmap.db", CandidateKind::Alternate),
-            candidate("AppDomain-com.toyopagroup.picaboo", "Library/Caches/scmap.db", CandidateKind::Alternate),
+            candidate(
+                "AppDomain-com.toyopagroup.picaboo",
+                "Documents/scmap.db",
+                CandidateKind::Primary,
+            ),
+            candidate(
+                "AppDomain-com.toyopagroup.picaboo",
+                "scmap.db",
+                CandidateKind::Alternate,
+            ),
+            candidate(
+                "AppDomain-com.toyopagroup.picaboo",
+                "Library/Caches/scmap.db",
+                CandidateKind::Alternate,
+            ),
         ],
     }
 }

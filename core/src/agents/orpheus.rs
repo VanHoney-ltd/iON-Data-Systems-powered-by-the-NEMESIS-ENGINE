@@ -3,6 +3,7 @@
 use anyhow::Result;
 use serde_json::json;
 
+use crate::agents::orpheus_inventory::{build_inventory, write_inventory_outputs};
 use crate::agents::orpheus_recon::{list_databases, summarize_db};
 use crate::agents::orpheus_report::render_markdown;
 use crate::agents::{Agent, AgentCtx};
@@ -29,6 +30,9 @@ impl Agent for OrpheusAgent {
     const SCHEMA_VERSION: u32 = ORPHEUS_SCHEMA_VERSION;
 
     fn extract(ctx: &AgentCtx) -> Result<Vec<EvidenceRecord>> {
+        let inventory = build_inventory(&ctx.backup_root)?;
+        write_inventory_outputs(&ctx.evidence_dir, &inventory)?;
+
         let db_paths = list_databases(&ctx.backup_root);
 
         let mut summaries = Vec::with_capacity(db_paths.len());
@@ -71,6 +75,11 @@ impl Agent for OrpheusAgent {
             payload: json!({
                 "case_id": ctx.case.name(),
                 "state": "complete",
+                "total_apps": inventory.apps.len(),
+                "total_containers": inventory.containers.len(),
+                "total_app_groups": inventory.containers.iter().filter(|c| c.kind == "app_group").count(),
+                "total_plists": inventory.plists.len(),
+                "high_value_targets": inventory.high_value_targets.len(),
                 "total_databases": summaries.len(),
                 "total_tables": total_tables,
                 "total_rows": total_rows,
@@ -79,6 +88,36 @@ impl Agent for OrpheusAgent {
                 "markdown_report": markdown_report,
             }),
         });
+
+        for app in inventory.apps {
+            records.push(EvidenceRecord {
+                schema_version: Self::SCHEMA_VERSION,
+                source_agent: Self::NAME.to_string(),
+                record_type: "app".to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                payload: serde_json::to_value(&app)?,
+            });
+        }
+
+        for container in inventory.containers {
+            records.push(EvidenceRecord {
+                schema_version: Self::SCHEMA_VERSION,
+                source_agent: Self::NAME.to_string(),
+                record_type: "container".to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                payload: serde_json::to_value(&container)?,
+            });
+        }
+
+        for high_value in inventory.high_value_targets {
+            records.push(EvidenceRecord {
+                schema_version: Self::SCHEMA_VERSION,
+                source_agent: Self::NAME.to_string(),
+                record_type: "high_value_target".to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                payload: serde_json::to_value(&high_value)?,
+            });
+        }
 
         // Database records
         for summary in summaries {

@@ -136,7 +136,7 @@ fn summarize_table(
     if !is_safe_sql_identifier(table_name) {
         return Err(anyhow!("Invalid table name: {}", table_name));
     }
-    
+
     // Get columns
     let mut col_stmt = conn.prepare(&format!("PRAGMA table_info('{}')", table_name))?;
     let columns: Vec<String> = col_stmt

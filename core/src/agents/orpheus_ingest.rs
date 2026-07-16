@@ -175,7 +175,10 @@ fn resolve_case_layout(
             Ok((root, ingest_root, log_path))
         }
         None => {
-            let case_root = PathBuf::from("/home/ghost/case").join(case_id);
+            let case_root = std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("cases")
+                .join(case_id);
             let ingest_root = case_root.join("evidence").join("documents");
             let log_path = case_root.join("logs").join("case.log");
             Ok((case_root, ingest_root, log_path))

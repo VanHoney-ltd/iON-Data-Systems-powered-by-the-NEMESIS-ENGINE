@@ -3,7 +3,6 @@
 //! All forensic agents implement the `Agent` trait.
 //! A single binary (`minios`) dispatches to the correct agent at runtime.
 
-use chrono::Utc;
 use anyhow::{Context, Result};
 use std::env;
 use std::path::PathBuf;
@@ -42,27 +41,30 @@ pub mod cerberus_models;
 pub mod charon_models;
 pub mod nyx_models;
 pub mod obolus_models;
-pub mod psyche_models;
 pub mod orpheus_crypto;
 pub mod orpheus_ingest;
 pub mod orpheus_recon;
 pub mod orpheus_report;
+pub mod psyche_models;
 
 // Agent modules (ported in Session 3)
 pub mod aether;
-pub mod plutus;
+pub mod atlas;
 pub mod cerberus;
 pub mod charon;
 pub mod nyx;
 pub mod obolus;
-pub mod atlas;
 pub mod orpheus;
+pub mod orpheus_inventory;
+pub mod plutus;
 pub mod psyche;
 
 // Lightweight agents (no separate model files)
 pub mod echo;
-pub mod vigil;
 pub mod hermes;
+pub mod intake;
+pub mod vigil;
+pub mod voicemail;
 
 use crate::case::Case;
 use crate::evidence::{write_evidence, EvidenceRecord};
@@ -96,8 +98,8 @@ pub trait Agent: Sized {
 
         ctx.log(&format!("{} extraction started", Self::NAME));
 
-        let records = Self::extract(&ctx)
-            .with_context(|| format!("{} extraction failed", Self::NAME))?;
+        let records =
+            Self::extract(&ctx).with_context(|| format!("{} extraction failed", Self::NAME))?;
 
         write_evidence(
             &ctx.evidence_dir,
@@ -167,12 +169,16 @@ impl AgentCtx {
     pub fn log(&self, message: &str) {
         let _ = self.case.log(message, None);
         if is_json_streaming() {
-            emit_json_event(&self.agent_name, "log", serde_json::json!({"message": message}));
+            emit_json_event(
+                &self.agent_name,
+                "log",
+                serde_json::json!({"message": message}),
+            );
         }
     }
 
     /// Emit a structured progress event to stdout when NDJSON streaming is enabled.
-    pub fn emit_progress(&self, agent: &str, step: usize, total: usize, label: &str) {
+    pub fn emit_progress(&self, _agent: &str, step: usize, total: usize, label: &str) {
         if is_json_streaming() {
             emit_json_event(
                 &self.agent_name,
@@ -191,8 +197,7 @@ impl AgentCtx {
         let path = self.backup_root.join(relative_path);
         let file = std::fs::File::open(&path)
             .with_context(|| format!("opening plist {}", path.display()))?;
-        plist::from_reader(file)
-            .with_context(|| format!("parsing plist {}", path.display()))
+        plist::from_reader(file).with_context(|| format!("parsing plist {}", path.display()))
     }
 }
 
@@ -273,6 +278,13 @@ pub fn get_agent_definitions() -> Vec<AgentDefinition> {
             category: "Media",
         },
         AgentDefinition {
+            name: "Voicemail",
+            slug: "voicemail",
+            description: "First-class voicemail database extraction and normalization",
+            schema_version: 1,
+            category: "Media",
+        },
+        AgentDefinition {
             name: "Orpheus",
             slug: "orpheus",
             description: "Generic SQLite database reconnaissance",
@@ -293,6 +305,14 @@ pub fn get_agent_definitions() -> Vec<AgentDefinition> {
             schema_version: 1,
             category: "Media",
         },
+        AgentDefinition {
+            name: "Intake",
+            slug: "intake",
+            description:
+                "External evidence intake for documents, spreadsheets, recordings, and loose media",
+            schema_version: 1,
+            category: "Case Evidence",
+        },
     ]
 }
 
@@ -300,6 +320,7 @@ pub fn get_agent_definitions() -> Vec<AgentDefinition> {
 pub fn dispatch(agent_name: &str, case_name: &str) -> Result<()> {
     match agent_name {
         "vigil" => vigil::VigilAgent::run_with_case(case_name),
+        "voicemail" => voicemail::VoicemailAgent::run_with_case(case_name),
         "echo" => echo::EchoAgent::run_with_case(case_name),
         "aether" => aether::AetherAgent::run_with_case(case_name),
         "plutus" => plutus::PlutusAgent::run_with_case(case_name),
@@ -311,8 +332,10 @@ pub fn dispatch(agent_name: &str, case_name: &str) -> Result<()> {
         "orpheus" => orpheus::OrpheusAgent::run_with_case(case_name),
         "psyche" => psyche::PsycheAgent::run_with_case(case_name),
         "hermes" => hermes::HermesAgent::run_with_case(case_name),
+        "intake" => intake::IntakeAgent::run_with_case(case_name),
+        "intake-watch" => intake::watch_case(case_name),
         _ => anyhow::bail!(
-            "Unknown agent: {}. Available: vigil, echo, aether, plutus, cerberus, charon, nyx, obolus, atlas, orpheus, psyche, hermes",
+            "Unknown agent: {}. Available: vigil, voicemail, echo, aether, plutus, cerberus, charon, nyx, obolus, atlas, orpheus, psyche, hermes, intake, intake-watch",
             agent_name
         ),
     }

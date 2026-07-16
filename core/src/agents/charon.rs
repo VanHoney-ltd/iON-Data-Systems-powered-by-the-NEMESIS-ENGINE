@@ -1,6 +1,6 @@
 //! Charon — Photo/media extraction agent.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::json;
 use std::collections::HashMap;
@@ -8,9 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-
+use crate::agents::charon_models::{AssetRecord, LocationMetadata, MediaType};
 use crate::agents::{Agent, AgentCtx};
-use crate::agents::charon_models::{AssetRecord, MediaType, LocationMetadata};
 use crate::common::prepared::{prepare_artifact, PrepareContext};
 use crate::common::resolver::{ArtifactResolver, BackupResolver};
 use crate::common::target::photos_target;
@@ -164,8 +163,12 @@ impl Agent for CharonAgent {
             ) = row;
 
             let media_type = map_media_type(kind, kind_subtype);
-            let created_date = date_created.map(apple_timestamp_to_utc).unwrap_or_else(|| Utc::now());
-            let added_date_dt = added_date.map(apple_timestamp_to_utc).unwrap_or(created_date);
+            let created_date = date_created
+                .map(apple_timestamp_to_utc)
+                .unwrap_or_else(|| Utc::now());
+            let added_date_dt = added_date
+                .map(apple_timestamp_to_utc)
+                .unwrap_or(created_date);
             let modified_date = modification_date.map(apple_timestamp_to_utc);
             let trashed_date_dt = trashed_date.map(apple_timestamp_to_utc);
 
@@ -183,7 +186,8 @@ impl Agent for CharonAgent {
                 None
             };
 
-            let file_path = if let (Some(dir), Some(name)) = (directory.as_ref(), filename.as_ref()) {
+            let file_path = if let (Some(dir), Some(name)) = (directory.as_ref(), filename.as_ref())
+            {
                 if dir.len() == 1 {
                     Some(format!("Media/PhotoData/{}/{}", dir, name))
                 } else {
@@ -193,7 +197,10 @@ impl Agent for CharonAgent {
                 None
             };
 
-            let mime_type = uti.as_ref().map(|u| uti_to_mime(u)).unwrap_or_else(|| "image/jpeg".to_string());
+            let mime_type = uti
+                .as_ref()
+                .map(|u| uti_to_mime(u))
+                .unwrap_or_else(|| "image/jpeg".to_string());
 
             let asset = AssetRecord {
                 schema_version: crate::agents::charon_models::CHARON_ASSET_SCHEMA_VERSION,
@@ -208,7 +215,11 @@ impl Agent for CharonAgent {
                 file_size: None,
                 width,
                 height,
-                duration: if duration.map(|d| d > 0.0).unwrap_or(false) { duration } else { None },
+                duration: if duration.map(|d| d > 0.0).unwrap_or(false) {
+                    duration
+                } else {
+                    None
+                },
                 orientation: orientation.unwrap_or(1),
                 created_date,
                 added_date: added_date_dt,
@@ -255,7 +266,11 @@ impl Agent for CharonAgent {
             let assets_path = charon_dir.join("assets.json");
             let json = serde_json::to_string_pretty(&assets)?;
             fs::write(&assets_path, json)?;
-            ctx.log(&format!("Charon: wrote {} assets to {}", assets.len(), assets_path.display()));
+            ctx.log(&format!(
+                "Charon: wrote {} assets to {}",
+                assets.len(),
+                assets_path.display()
+            ));
 
             // Generate media catalog PDF
             if let Err(e) = generate_media_catalog(ctx, &assets) {
@@ -293,7 +308,7 @@ const THUMB_HEIGHT: u32 = 200;
 fn build_backup_file_index(case_root: &Path) -> HashMap<String, PathBuf> {
     let mut index = HashMap::new();
     let backup_dir = case_root.join("prepared").join("helios").join("full.styg");
-    
+
     if !backup_dir.exists() {
         return index;
     }
@@ -319,6 +334,7 @@ fn build_backup_file_index(case_root: &Path) -> HashMap<String, PathBuf> {
 fn generate_thumbnails(
     assets: &[AssetRecord],
     backup_index: &HashMap<String, PathBuf>,
+    case_root: &Path,
     thumbs_dir: &Path,
 ) -> HashMap<i64, PathBuf> {
     let mut thumb_map = HashMap::new();
@@ -326,7 +342,7 @@ fn generate_thumbnails(
     for asset in assets {
         let src_path = if let Some(path) = backup_index.get(&asset.filename.to_lowercase()) {
             path.clone()
-        } else if let Some(path) = resolve_asset_path(asset) {
+        } else if let Some(path) = resolve_asset_path(asset, case_root) {
             path
         } else {
             continue;
@@ -342,10 +358,14 @@ fn generate_thumbnails(
             let result = if is_video {
                 Command::new("ffmpeg")
                     .args([
-                        "-i", src_path.to_str().unwrap_or(""),
-                        "-ss", "00:00:01",
-                        "-vframes", "1",
-                        "-vf", &format!("scale={}:{}", THUMB_WIDTH, THUMB_HEIGHT),
+                        "-i",
+                        src_path.to_str().unwrap_or(""),
+                        "-ss",
+                        "00:00:01",
+                        "-vframes",
+                        "1",
+                        "-vf",
+                        &format!("scale={}:{}", THUMB_WIDTH, THUMB_HEIGHT),
                         "-y",
                         thumb_path.to_str().unwrap_or(""),
                     ])
@@ -354,8 +374,10 @@ fn generate_thumbnails(
                 Command::new("convert")
                     .args([
                         src_path.to_str().unwrap_or(""),
-                        "-resize", &format!("{}x{}", THUMB_WIDTH, THUMB_HEIGHT),
-                        "-quality", "75",
+                        "-resize",
+                        &format!("{}x{}", THUMB_WIDTH, THUMB_HEIGHT),
+                        "-quality",
+                        "75",
                         thumb_path.to_str().unwrap_or(""),
                     ])
                     .output()
@@ -367,9 +389,12 @@ fn generate_thumbnails(
                     if !is_video {
                         let _ = Command::new("ffmpeg")
                             .args([
-                                "-i", src_path.to_str().unwrap_or(""),
-                                "-vf", &format!("scale={}:{}", THUMB_WIDTH, THUMB_HEIGHT),
-                                "-frames:v", "1",
+                                "-i",
+                                src_path.to_str().unwrap_or(""),
+                                "-vf",
+                                &format!("scale={}:{}", THUMB_WIDTH, THUMB_HEIGHT),
+                                "-frames:v",
+                                "1",
                                 "-y",
                                 thumb_path.to_str().unwrap_or(""),
                             ])
@@ -388,16 +413,13 @@ fn generate_thumbnails(
 }
 
 /// Fallback path resolution when backup index misses.
-fn resolve_asset_path(asset: &AssetRecord) -> Option<PathBuf> {
-    let case_root = PathBuf::from("/home/ghost/iON/cases/pcr");
+fn resolve_asset_path(asset: &AssetRecord, case_root: &Path) -> Option<PathBuf> {
     let backup_root = case_root.join("prepared").join("helios").join("full.styg");
 
     let fp = asset.file_path.as_ref()?;
 
     let candidates = if fp.starts_with("DCIM/") {
-        vec![
-            backup_root.join("CameraRollDomain").join("Media").join(fp),
-        ]
+        vec![backup_root.join("CameraRollDomain").join("Media").join(fp)]
     } else if fp.starts_with("Media/PhotoData/") {
         let parts: Vec<&str> = fp.split('/').collect();
         if parts.len() >= 4 {
@@ -405,7 +427,16 @@ fn resolve_asset_path(asset: &AssetRecord) -> Option<PathBuf> {
             let filename = parts[3];
             vec![
                 backup_root.join("CameraRollDomain").join(fp),
-                backup_root.join("CameraRollDomain").join("Media").join("PhotoData").join("UBF").join("scopes").join("syndication").join("originals").join(hash_dir).join(filename),
+                backup_root
+                    .join("CameraRollDomain")
+                    .join("Media")
+                    .join("PhotoData")
+                    .join("UBF")
+                    .join("scopes")
+                    .join("syndication")
+                    .join("originals")
+                    .join(hash_dir)
+                    .join(filename),
             ]
         } else {
             vec![backup_root.join("CameraRollDomain").join(fp)]
@@ -422,13 +453,16 @@ fn generate_media_catalog(ctx: &AgentCtx, assets: &[AssetRecord]) -> Result<()> 
     fs::create_dir_all(&evidence_dir)?;
 
     let backup_index = build_backup_file_index(&ctx.case.root_path());
-    ctx.log(&format!("Charon: indexed {} backup files for catalog", backup_index.len()));
+    ctx.log(&format!(
+        "Charon: indexed {} backup files for catalog",
+        backup_index.len()
+    ));
 
     let thumbs_dir = evidence_dir.join("catalog_thumbs");
     fs::create_dir_all(&thumbs_dir)?;
 
     ctx.log("Charon: generating thumbnails...");
-    let thumb_map = generate_thumbnails(assets, &backup_index, &thumbs_dir);
+    let thumb_map = generate_thumbnails(assets, &backup_index, &ctx.case.root_path(), &thumbs_dir);
     ctx.log(&format!("Charon: generated {} thumbnails", thumb_map.len()));
 
     let chunks: Vec<&[AssetRecord]> = assets.chunks(CATALOG_CHUNK_SIZE).collect();
@@ -585,12 +619,16 @@ fn build_catalog_cell(asset: &AssetRecord, thumb_map: &HashMap<i64, PathBuf>) ->
         asset.created_date.format("%Y-%m-%d %H:%M")
     );
 
-    let loc = asset.location_metadata.as_ref().map(|l| {
-        format!(
-            "<div class=\"meta-line loc\">{:.4}, {:.4}</div>",
-            l.latitude, l.longitude
-        )
-    }).unwrap_or_default();
+    let loc = asset
+        .location_metadata
+        .as_ref()
+        .map(|l| {
+            format!(
+                "<div class=\"meta-line loc\">{:.4}, {:.4}</div>",
+                l.latitude, l.longitude
+            )
+        })
+        .unwrap_or_default();
 
     let video_overlay = if is_video && has_file {
         r#"<div class="play-overlay">▶</div>"#.to_string()
@@ -625,7 +663,9 @@ fn resolve_asset_image_tag(
     // No file found — show placeholder
     let color = match asset.media_type {
         MediaType::Photo => "#4a90d9",
-        MediaType::Video | MediaType::SlowMo | MediaType::Timelapse | MediaType::LivePhoto => "#d94a4a",
+        MediaType::Video | MediaType::SlowMo | MediaType::Timelapse | MediaType::LivePhoto => {
+            "#d94a4a"
+        }
         MediaType::Screenshot => "#4ad9a6",
         MediaType::Portrait => "#d94ad0",
         MediaType::Selfie => "#d9a64a",
@@ -697,5 +737,6 @@ fn uti_to_mime(uti: &str) -> String {
         "com.compuserve.gif" => "image/gif",
         "dyn.ah62d4rv4ge81g6pq" => "image/jpeg",
         _ => "application/octet-stream",
-    }.to_string()
+    }
+    .to_string()
 }

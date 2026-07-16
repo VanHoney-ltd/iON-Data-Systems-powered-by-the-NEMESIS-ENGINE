@@ -1,5 +1,6 @@
 //! Backup Creation and Management
 
+use crate::agents::cerberus::{export_contacts, extract_contacts};
 use crate::case::Case;
 use crate::chronos::awake::KeepAwakeGuard;
 use crate::chronos::config::ChronosConfig;
@@ -12,16 +13,11 @@ use crate::common::resolver::{
     write_resolver_audit, ArtifactResolver, BackupResolver, ResolverAuditRecord, ResolverContext,
 };
 use crate::common::target::chronos_targets;
-use crate::agents::cerberus::{export_contacts, extract_contacts};
 use anyhow::{Context, Result};
-use crossterm::terminal;
 use serde::Serialize;
 use std::fs;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -59,13 +55,6 @@ impl BackupManager {
 
     pub fn create_backup(&self) -> Result<BackupResult> {
         let start_time = Instant::now();
-
-        // Enforce encrypted backups before touching the device
-        if !self.config.offline && self.config.backup_password.is_none() {
-            return Err(anyhow::anyhow!(
-                "Encrypted backups are required. Set BACKUP_PASSWORD environment variable."
-            ));
-        }
 
         self.case.log("CHRONOS — Full Backup Starting", None)?;
 
@@ -164,13 +153,40 @@ impl BackupManager {
         let mut orpheus_ok = false;
 
         if !self.config.offline {
-            let password = self
-                .config
-                .backup_password
-                .as_deref()
-                .unwrap_or_default();
-
             // 1. Run Helios
+            let Some(password) = self.config.backup_password.as_deref() else {
+                println!(
+                    "\n🔐 Backup acquisition completed. Skipping Helios because no decrypt password was provided to Chronos."
+                );
+                println!(
+                    "   Use the Decrypt Backup tab when you are ready to decrypt this backup."
+                );
+                self.case.log(
+                    "CHRONOS — Skipping Helios",
+                    Some("No decrypt password was provided during acquisition"),
+                )?;
+                let duration = start_time.elapsed();
+                println!("\n✓ CHRONOS ACQUISITION COMPLETE");
+                println!("  Location: {}", backup_root.display());
+                println!("  Duration: {:?}", duration);
+                self.case.log(
+                    "CHRONOS ACQUISITION COMPLETE",
+                    Some(&format!(
+                        "backup: {} helios: skipped orpheus: skipped duration: {:?}",
+                        backup_root.display(),
+                        duration
+                    )),
+                )?;
+                return Ok(BackupResult {
+                    backup_root,
+                    manifest,
+                    device_info: prepared_device_info,
+                    duration,
+                    helios_root: None,
+                    orpheus_ok: false,
+                });
+            };
+
             let helios_requested = self.case.workspace().helios_full_root();
             self.run_helios(&backup_root, &helios_requested, password)?;
 
@@ -203,11 +219,12 @@ impl BackupManager {
                 manifest.backup_root = helios_output.display().to_string();
 
                 // Save merged manifest
-                self.case.write_file(
-                    &summary_path,
-                    serde_json::to_vec_pretty(&manifest)?,
-                )?;
-                println!("✓ Chronos manifest merged and saved: {}", summary_path.display());
+                self.case
+                    .write_file(&summary_path, serde_json::to_vec_pretty(&manifest)?)?;
+                println!(
+                    "✓ Chronos manifest merged and saved: {}",
+                    summary_path.display()
+                );
                 self.case.log(
                     "CHRONOS — Manifest merged (phase 2)",
                     Some(&format!("{}", summary_path.display())),
@@ -242,7 +259,10 @@ impl BackupManager {
             Some(&format!(
                 "backup: {} helios: {} orpheus: {} duration: {:?}",
                 backup_root.display(),
-                helios_root.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),
+                helios_root
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
                 if orpheus_ok { "ok" } else { "skipped" },
                 duration
             )),
@@ -298,47 +318,28 @@ impl BackupManager {
         let _keep_awake = KeepAwakeGuard::new();
 
         let udid = device_info.map(|d| d.udid.as_str());
-        let password = self.config.backup_password.as_deref();
-
-        self.perform_backup(base_dir, udid, password)
+        self.perform_backup(base_dir, udid)
     }
 
-    fn perform_backup(
-        &self,
-        base_dir: &Path,
-        udid: Option<&str>,
-        password: Option<&str>,
-    ) -> Result<PathBuf> {
+    fn perform_backup(&self, base_dir: &Path, udid: Option<&str>) -> Result<PathBuf> {
         println!("📱 Creating full encrypted backup...");
         println!("⏳ This may take 2-6 hours depending on the size of the backup and your connection speed.");
         println!("   Leave the device connected and unlocked. Do not close this window.\n");
-        self.case.log("CHRONOS — Creating full encrypted backup", None)?;
+        self.case
+            .log("CHRONOS — Creating full encrypted backup", None)?;
 
-        // Step 1: Ensure encryption is enabled
-        let enc_ok = self.ensure_encryption_enabled(base_dir, udid, password);
-        if let Err(ref e) = enc_ok {
-            println!("⚠️  Encryption setup issue: {}", e);
-            self.case.log(
-                "CHRONOS — Encryption setup warning",
-                Some(&format!("{}", e)),
-            )?;
-        }
-        // We proceed even if enc_ok is Err("already enabled") — the backup will tell us if things are really wrong.
-
-        // Step 2: Run full backup (with password if available)
+        // Run full backup interactively so libimobiledevice owns the password prompt.
+        // Do not call `idevicebackup2 encryption on` first. When encryption is
+        // already enabled, libimobiledevice exits 255 and can leave the backup
+        // service in a bad state for the immediately following backup command.
         let mut backup_builder =
-            crate::chronos::idevicebackup2::IDeviceBackup2Builder::full_backup(base_dir);
+            crate::chronos::idevicebackup2::IDeviceBackup2Builder::full_backup(base_dir)
+                .interactive();
         if let Some(id) = udid {
             backup_builder = backup_builder.udid(id);
         }
-        if let Some(pw) = password {
-            backup_builder = backup_builder.password(pw);
-        }
 
         eprintln!("🚀 Executing: {}", backup_builder.to_command_string());
-
-        let progress_pct = Arc::new(std::sync::atomic::AtomicU8::new(0));
-        let _progress = MetroidProgress::start_with_progress(Arc::clone(&progress_pct));
 
         let mut child = backup_builder
             .build()
@@ -350,86 +351,36 @@ impl BackupManager {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
 
-        // Spawn a thread to read combined output and parse percentage
-        let progress_clone = Arc::clone(&progress_pct);
+        // Forward idevicebackup2 output so the app can parse progress and show
+        // a structured progress bar instead of noisy terminal animation.
         let reader_handle = thread::spawn(move || {
             use std::io::{BufRead, BufReader};
 
-            fn read_and_parse<R: std::io::Read>(source: Option<R>, pct: &std::sync::atomic::AtomicU8) {
+            fn forward_lines<R: std::io::Read>(source: Option<R>) {
                 if let Some(stream) = source {
                     let reader = BufReader::new(stream);
                     for line in reader.lines().flatten() {
-                        // idevicebackup2 often prints progress like "10%" or "Progress: 10%"
-                        if let Some(cap) = regex_percent(&line) {
-                            pct.store(cap, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        println!("[idevicebackup2] {}", line);
                     }
                 }
             }
 
-            fn regex_percent(line: &str) -> Option<u8> {
-                // Look for the first number immediately followed by %
-                let chars: Vec<char> = line.chars().collect();
-                let mut i = 0;
-                while i < chars.len() {
-                    if chars[i].is_ascii_digit() {
-                        let start = i;
-                        while i < chars.len() && chars[i].is_ascii_digit() {
-                            i += 1;
-                        }
-                        if i < chars.len() && chars[i] == '%' {
-                            let num_str: String = chars[start..i].iter().collect();
-                            if let Ok(n) = num_str.parse::<u8>() {
-                                return Some(n);
-                            }
-                        }
-                    }
-                    i += 1;
-                }
-                None
-            }
-
-            read_and_parse(stdout, &progress_clone);
-            read_and_parse(stderr, &progress_clone);
+            forward_lines(stdout);
+            forward_lines(stderr);
         });
 
         let status = child.wait()?;
         let _ = reader_handle.join();
-        drop(_progress);
-
         if !status.success() {
             // We lost stdout/stderr because it was consumed by the reader thread.
-            // Re-run briefly to capture error or use interactive fallback.
+            // The original interactive idevicebackup2 status is the useful failure signal.
             self.case.log(
                 "CHRONOS FAILED",
-                Some(&format!("idevicebackup2 backup exited with status {:?}", status.code())),
+                Some(&format!(
+                    "idevicebackup2 backup exited with status {:?}",
+                    status.code()
+                )),
             )?;
-
-            // Interactive fallback if password-related failure is suspected
-            if status.code() == Some(255) && password.is_some() {
-                println!("\n🔐 Non-interactive backup failed. Falling back to interactive mode...");
-                println!("   Please enter the backup password on the prompt below.\n");
-                let mut interactive_builder =
-                    crate::chronos::idevicebackup2::IDeviceBackup2Builder::full_backup(base_dir)
-                        .interactive();
-                if let Some(id) = udid {
-                    interactive_builder = interactive_builder.udid(id);
-                }
-                let int_status = interactive_builder
-                    .build()
-                    .status()
-                    .with_context(|| "Failed to run interactive backup")?;
-                if !int_status.success() {
-                    return Err(ChronosError::BackupFailed(format!(
-                        "Interactive backup failed with status {:?}",
-                        int_status.code()
-                    ))
-                    .into());
-                }
-                println!("✓ Full encrypted backup completed (interactive)");
-                return self.find_backup_root(base_dir)?
-                    .ok_or_else(|| ChronosError::InvalidBackupFormat.into());
-            }
 
             return Err(ChronosError::BackupFailed(format!(
                 "idevicebackup2 exited with status {:?}",
@@ -443,60 +394,6 @@ impl BackupManager {
             .ok_or_else(|| ChronosError::InvalidBackupFormat.into())
     }
 
-    fn ensure_encryption_enabled(
-        &self,
-        base_dir: &Path,
-        udid: Option<&str>,
-        password: Option<&str>,
-    ) -> Result<()> {
-        let mut builder = crate::chronos::idevicebackup2::IDeviceBackup2Builder::encryption(base_dir, true);
-        if password.is_none() {
-            builder = builder.interactive();
-        }
-        if let Some(id) = udid {
-            builder = builder.udid(id);
-        }
-        if let Some(pw) = password {
-            builder = builder.password(pw);
-        }
-
-        let output = builder.execute()?;
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let combined = format!("{} {}", stdout, stderr).to_lowercase();
-
-        if output.status.success()
-            || combined.contains("already enabled")
-            || combined.contains("is enabled")
-        {
-            return Ok(());
-        }
-
-        // Try interactive as last resort
-        if password.is_some() {
-            println!("\n🔐 Encryption enablement failed non-interactively. Falling back to interactive...");
-            let mut interactive =
-                crate::chronos::idevicebackup2::IDeviceBackup2Builder::encryption(base_dir, true)
-                    .interactive();
-            if let Some(id) = udid {
-                interactive = interactive.udid(id);
-            }
-            let status = interactive
-                .build()
-                .status()
-                .with_context(|| "Failed to run interactive encryption enable")?;
-            if status.success() {
-                return Ok(());
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Failed to enable backup encryption: stdout='{}' stderr='{}'",
-            stdout.trim(),
-            stderr.trim()
-        ))
-    }
-
     fn run_helios(&self, backup_root: &Path, output_dir: &Path, password: &str) -> Result<()> {
         println!("\n🔆 Launching Helios full decrypt...");
         self.case.log(
@@ -504,8 +401,9 @@ impl BackupManager {
             Some(&format!("output={}", output_dir.display())),
         )?;
 
-        let helios_bin = locate_agent_binary("helios")
-            .ok_or_else(|| anyhow::anyhow!("Could not locate 'helios' binary on PATH or next to chronos"))?;
+        let helios_bin = locate_agent_binary("helios").ok_or_else(|| {
+            anyhow::anyhow!("Could not locate 'helios' binary on PATH or next to chronos")
+        })?;
 
         fs::create_dir_all(output_dir)?;
 
@@ -527,7 +425,10 @@ impl BackupManager {
         })?;
 
         if !status.success() {
-            let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
+            let code = status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string());
             self.case.log("CHRONOS — Helios failed", Some(&code))?;
             return Err(ChronosError::ToolExecutionFailed(format!(
                 "helios exited with status {}",
@@ -548,33 +449,12 @@ impl BackupManager {
             Some(&format!("root={}", root.display())),
         )?;
 
-        let orpheus_bin = locate_agent_binary("orpheus")
-            .ok_or_else(|| anyhow::anyhow!("Could not locate 'orpheus' binary on PATH or next to chronos"))?;
-
-        let mut cmd = Command::new(&orpheus_bin);
-        cmd.arg("recon")
-            .arg("-c")
-            .arg(self.case.name())
-            .arg("-r")
-            .arg(root)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-
-        println!("🚀 Executing: {}", cmd_to_string(&cmd));
-
-        let status = cmd.status().with_context(|| {
-            format!("Failed to execute orpheus binary: {}", orpheus_bin.display())
+        crate::agents::dispatch("orpheus", self.case.name()).with_context(|| {
+            self.case
+                .log("CHRONOS — Orpheus failed", Some("in-process dispatch"))
+                .ok();
+            "Orpheus in-process dispatch failed"
         })?;
-
-        if !status.success() {
-            let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
-            self.case.log("CHRONOS — Orpheus failed", Some(&code))?;
-            return Err(ChronosError::ToolExecutionFailed(format!(
-                "orpheus exited with status {}",
-                code
-            ))
-            .into());
-        }
 
         println!("✓ Orpheus completed successfully");
         self.case.log("CHRONOS — Orpheus completed", None)?;
@@ -583,14 +463,7 @@ impl BackupManager {
 
     fn run_all_evidence_agents(&self) -> Result<()> {
         let agents = [
-            "atlas",
-            "plutus",
-            "cerberus",
-            "hermes",
-            "charon",
-            "nyx",
-            "obolus",
-            "psyche",
+            "atlas", "plutus", "cerberus", "hermes", "charon", "nyx", "obolus", "psyche",
         ];
 
         for agent in agents {
@@ -647,7 +520,11 @@ impl BackupManager {
         match extract_contacts(&self.case) {
             Ok(contacts) => {
                 let path = export_contacts(&self.case, &contacts)?;
-                println!("✓ Extracted {} contacts -> {}", contacts.len(), path.display());
+                println!(
+                    "✓ Extracted {} contacts -> {}",
+                    contacts.len(),
+                    path.display()
+                );
                 self.case.log(
                     "CHRONOS — Contacts extracted",
                     Some(&format!("{} contacts", contacts.len())),
@@ -656,10 +533,8 @@ impl BackupManager {
             }
             Err(e) => {
                 println!("⚠️  Contacts extraction failed: {}", e);
-                self.case.log(
-                    "CHRONOS — Contacts extraction failed",
-                    Some(&e.to_string()),
-                )?;
+                self.case
+                    .log("CHRONOS — Contacts extraction failed", Some(&e.to_string()))?;
                 // Non-fatal: don't block the pipeline
                 Ok(())
             }
@@ -668,13 +543,12 @@ impl BackupManager {
 
     fn launch_gui(&self) -> Result<()> {
         println!("\n🖥️  Launching iON GUI...");
-        self.case.log(
-            "CHRONOS — Launching GUI",
-            Some(self.case.name()),
-        )?;
+        self.case
+            .log("CHRONOS — Launching GUI", Some(self.case.name()))?;
 
-        let gui_bin = locate_agent_binary("ion_ui")
-            .ok_or_else(|| anyhow::anyhow!("Could not locate 'ion_ui' binary on PATH or next to chronos"))?;
+        let gui_bin = locate_agent_binary("ion_ui").ok_or_else(|| {
+            anyhow::anyhow!("Could not locate 'ion_ui' binary on PATH or next to chronos")
+        })?;
 
         let mut cmd = Command::new(&gui_bin);
         cmd.arg(self.case.root_path())
@@ -685,12 +559,15 @@ impl BackupManager {
 
         println!("🚀 Executing: {}", cmd_to_string(&cmd));
 
-        let status = cmd.status().with_context(|| {
-            format!("Failed to execute ion_ui binary: {}", gui_bin.display())
-        })?;
+        let status = cmd
+            .status()
+            .with_context(|| format!("Failed to execute ion_ui binary: {}", gui_bin.display()))?;
 
         if !status.success() {
-            let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
+            let code = status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string());
             self.case.log("CHRONOS — GUI failed", Some(&code))?;
             return Err(ChronosError::ToolExecutionFailed(format!(
                 "ion_ui exited with status {}",
@@ -868,7 +745,11 @@ impl BackupManager {
 
 fn merge_manifest(base: &mut ChronosManifest, from: ChronosManifest) {
     for record in from.prepared {
-        if let Some(existing) = base.prepared.iter_mut().find(|r| r.artifact_key == record.artifact_key) {
+        if let Some(existing) = base
+            .prepared
+            .iter_mut()
+            .find(|r| r.artifact_key == record.artifact_key)
+        {
             *existing = record;
         } else {
             base.prepared.push(record);
@@ -908,10 +789,22 @@ fn locate_agent_binary(name: &str) -> Option<PathBuf> {
     let candidates = [
         Path::new("target").join("debug").join(&exe_name),
         Path::new("target").join("release").join(&exe_name),
-        Path::new("iON").join("target").join("debug").join(&exe_name),
-        Path::new("iON").join("target").join("release").join(&exe_name),
-        Path::new("iON3").join("target").join("debug").join(&exe_name),
-        Path::new("iON3").join("target").join("release").join(&exe_name),
+        Path::new("iON")
+            .join("target")
+            .join("debug")
+            .join(&exe_name),
+        Path::new("iON")
+            .join("target")
+            .join("release")
+            .join(&exe_name),
+        Path::new("iON3")
+            .join("target")
+            .join("debug")
+            .join(&exe_name),
+        Path::new("iON3")
+            .join("target")
+            .join("release")
+            .join(&exe_name),
     ];
     for candidate in candidates {
         if candidate.exists() {
@@ -940,120 +833,6 @@ fn cmd_to_string(cmd: &Command) -> String {
         .map(|a| a.to_string_lossy().to_string())
         .collect();
     format!("{} {}", prog, args.join(" "))
-}
-
-const ANSI_RESET: &str = "\x1b[0m";
-const ANSI_BOLD: &str = "\x1b[1m";
-const ANSI_DIM: &str = "\x1b[2m";
-const ANSI_GREEN: &str = "\x1b[32m";
-const ANSI_YELLOW: &str = "\x1b[33m";
-const ANSI_CYAN: &str = "\x1b[36m";
-
-struct MetroidProgress {
-    stop: Arc<AtomicBool>,
-    handle: Option<thread::JoinHandle<()>>,
-}
-
-impl MetroidProgress {
-    fn start() -> Self {
-        Self::start_with_progress(Arc::new(std::sync::atomic::AtomicU8::new(0)))
-    }
-
-    fn start_with_progress(progress_pct: Arc<std::sync::atomic::AtomicU8>) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_thread = Arc::clone(&stop);
-        let handle = thread::spawn(move || {
-            let start = Instant::now();
-            let width = progress_width();
-            let mut step = 0usize;
-            while !stop_thread.load(Ordering::Relaxed) {
-                let pct = progress_pct.load(std::sync::atomic::Ordering::Relaxed);
-                let line = render_metroid_line(step, width, start.elapsed(), pct);
-                eprint!("\r\x1b[2K{}", line);
-                let _ = io::stderr().flush();
-                step = step.wrapping_add(1);
-                thread::sleep(Duration::from_millis(120));
-            }
-        });
-        Self {
-            stop,
-            handle: Some(handle),
-        }
-    }
-}
-
-impl Drop for MetroidProgress {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-        eprint!("\r\x1b[2K");
-        let _ = io::stderr().flush();
-        eprintln!();
-    }
-}
-
-fn progress_width() -> usize {
-    let fallback = 48usize;
-    let reserved = 24usize;
-    match terminal::size() {
-        Ok((cols, _)) => {
-            let width = (cols as usize).saturating_sub(reserved);
-            if width < 24 {
-                fallback
-            } else {
-                width.min(64)
-            }
-        }
-        Err(_) => fallback,
-    }
-}
-
-fn render_metroid_line(step: usize, width: usize, elapsed: Duration, pct: u8) -> String {
-    let scene = metroid_scene(step, width);
-    let elapsed = format_elapsed(elapsed);
-    let pct_str = if pct > 0 { format!("{:>3}%", pct) } else { "   ".to_string() };
-    format!(
-        "{bold}METROID RUN{reset} {scene} {dim}{elapsed} {cyan}{pct}{reset}",
-        bold = ANSI_BOLD,
-        dim = ANSI_DIM,
-        cyan = ANSI_CYAN,
-        reset = ANSI_RESET,
-        pct = pct_str,
-    )
-}
-
-fn metroid_scene(step: usize, width: usize) -> String {
-    const TILE: &[u8] = b"[]-=";
-    let width = width.max(4);
-    let samus_pos = step % width;
-    let metroid_pos = (step * 3 + 7) % width;
-
-    let mut out = String::new();
-    out.push_str(ANSI_GREEN);
-    for idx in 0..width {
-        if idx == samus_pos {
-            out.push_str(ANSI_YELLOW);
-            out.push('S');
-            out.push_str(ANSI_GREEN);
-        } else if idx == metroid_pos {
-            out.push_str(ANSI_CYAN);
-            out.push('o');
-            out.push_str(ANSI_GREEN);
-        } else {
-            out.push(TILE[idx % TILE.len()] as char);
-        }
-    }
-    out.push_str(ANSI_RESET);
-    out
-}
-
-fn format_elapsed(elapsed: Duration) -> String {
-    let total = elapsed.as_secs();
-    let minutes = total / 60;
-    let seconds = total % 60;
-    format!("T+{:02}:{:02}", minutes, seconds)
 }
 
 pub fn create_backup(case: Case, config: ChronosConfig) -> Result<BackupResult> {

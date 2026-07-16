@@ -88,6 +88,14 @@ impl Case {
         let workspace = self.workspace();
 
         for candidate in [
+            dirs::home_dir()
+                .map(|home| {
+                    home.join("iON")
+                        .join("prepared")
+                        .join("helios")
+                        .join(&self.name)
+                })
+                .unwrap_or_else(|| PathBuf::from("./prepared/helios").join(&self.name)),
             workspace.helios_full_root(),
             workspace.helios_sms_only_root(),
             self.root.join("prepared"),
@@ -146,6 +154,7 @@ impl Case {
         fs::create_dir_all(&self.root)?;
         fs::create_dir_all(self.root.join("logs"))?;
         fs::create_dir_all(self.root.join("evidence"))?;
+        fs::create_dir_all(self.root.join("intake"))?;
         fs::create_dir_all(self.root.join("backup"))?;
         fs::create_dir_all(self.root.join("clean"))?;
         Ok(())
@@ -217,7 +226,11 @@ impl Case {
         let mut entry = load_registry_entry(&self.name)?;
         entry.root = self.root.to_string_lossy().to_string();
         let normalized = normalize_phone(phone);
-        entry.device_phone_number = if normalized.is_empty() { None } else { Some(normalized) };
+        entry.device_phone_number = if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        };
         persist_registry_entry(&self.name, &entry)
     }
 }
@@ -360,7 +373,7 @@ fn locate_case_root(name: &str) -> Result<PathBuf> {
     // Priority order:
     // 1) Previously remembered registry entry
     // 2) Environment hints (iON_CASE_ROOTS / iON_HOME)
-    // 3) Common install locations (home, cwd, parents, ghostdevops folders)
+    // 3) Common install locations (home, cwd, parents)
     // 4) Fallback to ./cases/<name>
     let remembered_root = load_registry_entry(name).ok().and_then(|e| {
         if !e.root.is_empty() {
@@ -396,6 +409,7 @@ fn locate_case_root(name: &str) -> Result<PathBuf> {
 
     if let Some(home) = dirs::home_dir() {
         push_candidate(home.clone());
+        push_candidate(home.join("iON").join("backups").join("cases"));
         push_candidate(home.join("iON").join("cases"));
     }
 
@@ -408,23 +422,6 @@ fn locate_case_root(name: &str) -> Result<PathBuf> {
                 cur = p.parent();
             }
         }
-    }
-
-    // Crate root if available
-    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
-        push_candidate(PathBuf::from(manifest_dir));
-    }
-
-    // Common ghostdevops roots
-    if let Some(home) = dirs::home_dir() {
-        push_candidate(home.join("Documents").join("ghostdevops"));
-        push_candidate(home.join("Documents").join("ghostdevops").join("iON"));
-        push_candidate(home.join("Documents").join("ghostdevops").join("iON3"));
-        push_candidate(
-            home.join("Documents")
-                .join("ghostdevops")
-                .join("iON3_windows_output_results"),
-        );
     }
 
     let discovered_root = find_case_root_in_bases(name, &candidates);
@@ -464,6 +461,11 @@ fn select_preferred_case_root(
 ) -> Option<PathBuf> {
     match (remembered_root, discovered_root) {
         (Some(remembered), Some(discovered))
+            if is_ion_backup_case_root(&discovered, name) && remembered != discovered =>
+        {
+            Some(discovered)
+        }
+        (Some(remembered), Some(discovered))
             if is_output_case_root(&remembered, name) && remembered != discovered =>
         {
             Some(discovered)
@@ -472,6 +474,19 @@ fn select_preferred_case_root(
         (None, Some(discovered)) => Some(discovered),
         (None, None) => None,
     }
+}
+
+fn is_ion_backup_case_root(path: &Path, name: &str) -> bool {
+    let components: Vec<String> = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+
+    components.len() >= 4
+        && components[components.len() - 1] == name
+        && components[components.len() - 2] == "cases"
+        && components[components.len() - 3] == "backups"
+        && components[components.len() - 4] == "iON"
 }
 
 fn is_output_case_root(path: &Path, name: &str) -> bool {

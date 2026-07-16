@@ -2,13 +2,15 @@
 
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use walkdir::WalkDir;
 
-use crate::agents::{Agent, AgentCtx};
 use crate::agents::charon_models::{AssetRecord, MediaType, CHARON_ASSET_SCHEMA_VERSION};
+use crate::agents::intake::IntakeRecord;
+use crate::agents::{Agent, AgentCtx};
 use crate::common::prepared::compute_sha256;
 use crate::evidence::EvidenceRecord;
 use serde::{Deserialize, Serialize};
@@ -54,12 +56,17 @@ impl Agent for VigilAgent {
         let copy_manifest = load_copy_manifest(&manifest_path)?;
         let ffprobe_available = ffprobe_available();
 
-        let (videos, stats) =
+        let (mut videos, mut stats) =
             collect_video_inventory(&assets, &copy_manifest, &charon_dir, ffprobe_available);
+        let intake_videos = collect_intake_videos(ctx, ffprobe_available)?;
+        stats.intake_video_files = intake_videos.len();
+        videos.extend(intake_videos);
+        export_vigil_outputs(ctx, &videos)?;
 
         let mut warnings = Vec::new();
         if !ffprobe_available {
-            warnings.push("ffprobe not available; codec/container enrichment was skipped".to_string());
+            warnings
+                .push("ffprobe not available; codec/container enrichment was skipped".to_string());
         }
         if stats.unresolved_videos > 0 {
             warnings.push(format!(
@@ -92,12 +99,15 @@ impl Agent for VigilAgent {
                 "charon_copy_manifest_path": manifest_path.exists().then(|| manifest_path.display().to_string()),
                 "assets_examined": stats.assets_examined,
                 "video_assets": stats.video_assets,
+                "intake_video_files": stats.intake_video_files,
+                "total_video_records": videos.len(),
                 "videos_with_resolved_source_path": stats.videos_with_resolved_source_path,
                 "videos_with_copied_path": stats.videos_with_copied_path,
                 "videos_with_hash": stats.videos_with_hash,
                 "ffprobe_enriched": stats.ffprobe_enriched,
                 "unresolved_videos": stats.unresolved_videos,
                 "warnings": warnings,
+                "source_breakdown": source_breakdown(&videos),
             }),
         });
 
@@ -156,6 +166,7 @@ struct VideoStats {
     videos_with_hash: usize,
     ffprobe_enriched: usize,
     unresolved_videos: usize,
+    intake_video_files: usize,
 }
 
 #[derive(Debug, Default)]
@@ -192,11 +203,293 @@ struct FfprobeFormat {
 }
 
 fn load_charon_assets(path: &Path) -> Result<Vec<AssetRecord>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
     let raw = fs::read(path)
         .with_context(|| format!("Failed to read Charon assets at {}", path.display()))?;
     let assets: Vec<AssetRecord> = serde_json::from_slice(&raw)
         .with_context(|| format!("Failed to parse Charon assets JSON at {}", path.display()))?;
     Ok(assets)
+}
+
+fn collect_intake_videos(
+    ctx: &AgentCtx,
+    ffprobe_enabled: bool,
+) -> Result<Vec<VideoEvidenceRecord>> {
+    let intake_path = ctx
+        .case
+        .evidence_path("intake")
+        .join("external_evidence.json");
+    if !intake_path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw =
+        fs::read(&intake_path).with_context(|| format!("reading {}", intake_path.display()))?;
+    let intake_records: Vec<IntakeRecord> = serde_json::from_slice(&raw)
+        .with_context(|| format!("parsing {}", intake_path.display()))?;
+    let mut records = Vec::new();
+
+    for item in intake_records {
+        if item.media_type != "video" {
+            continue;
+        }
+        let copied_path = PathBuf::from(&item.managed_path);
+        let probe = if ffprobe_enabled {
+            probe_video(&copied_path).ok().flatten().unwrap_or_default()
+        } else {
+            VideoProbe::default()
+        };
+
+        records.push(VideoEvidenceRecord {
+            schema_version: VIGIL_VIDEO_SCHEMA_VERSION,
+            asset_id: Some(item.record_id),
+            asset_numeric_id: None,
+            filename: item.file_name,
+            media_type: "IntakeVideo".to_string(),
+            timestamp_utc: item.modified_utc,
+            source_path: Some(PathBuf::from(item.original_path)),
+            copied_path: Some(copied_path),
+            source_resolution_method: Some("intake_managed_copy".to_string()),
+            duration_seconds: probe.duration_seconds,
+            width: probe.width,
+            height: probe.height,
+            container: probe.container,
+            video_codec: probe.video_codec,
+            audio_codec: probe.audio_codec,
+            file_size: probe.file_size.or(Some(item.size_bytes)),
+            sha256: Some(item.sha256),
+            latitude: None,
+            longitude: None,
+        });
+    }
+    if records.is_empty() {
+        records.extend(collect_managed_intake_videos(ctx, ffprobe_enabled)?);
+    }
+    Ok(records)
+}
+
+fn collect_managed_intake_videos(
+    ctx: &AgentCtx,
+    ffprobe_enabled: bool,
+) -> Result<Vec<VideoEvidenceRecord>> {
+    let files_root = ctx.case.evidence_path("intake").join("files");
+    if !files_root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut records = Vec::new();
+    for entry in WalkDir::new(&files_root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if !is_video_path(path) {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("reading metadata {}", path.display()))?;
+        let sha256 = compute_sha256(path).ok();
+        let probe = if ffprobe_enabled {
+            probe_video(path).ok().flatten().unwrap_or_default()
+        } else {
+            VideoProbe::default()
+        };
+        let filename = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("video")
+            .to_string();
+        records.push(VideoEvidenceRecord {
+            schema_version: VIGIL_VIDEO_SCHEMA_VERSION,
+            asset_id: sha256
+                .as_ref()
+                .map(|value| format!("intake_{}", &value[..16])),
+            asset_numeric_id: None,
+            filename,
+            media_type: "IntakeVideo".to_string(),
+            timestamp_utc: metadata
+                .modified()
+                .ok()
+                .map(chrono::DateTime::<chrono::Utc>::from)
+                .map(|value| value.to_rfc3339()),
+            source_path: Some(path.to_path_buf()),
+            copied_path: Some(path.to_path_buf()),
+            source_resolution_method: Some("intake_managed_files_fallback".to_string()),
+            duration_seconds: probe.duration_seconds,
+            width: probe.width,
+            height: probe.height,
+            container: probe.container.or_else(|| infer_container_from_path(path)),
+            video_codec: probe.video_codec,
+            audio_codec: probe.audio_codec,
+            file_size: probe.file_size.or(Some(metadata.len())),
+            sha256,
+            latitude: None,
+            longitude: None,
+        });
+    }
+    Ok(records)
+}
+
+fn is_video_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "mp4" | "mov" | "m4v" | "avi" | "mkv" | "webm" | "3gp"
+    )
+}
+
+fn infer_container_from_path(path: &Path) -> Option<String> {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+fn export_vigil_outputs(ctx: &AgentCtx, videos: &[VideoEvidenceRecord]) -> Result<()> {
+    fs::create_dir_all(&ctx.evidence_dir)?;
+    fs::write(
+        ctx.evidence_dir.join("video_catalog.json"),
+        serde_json::to_vec_pretty(videos)?,
+    )?;
+    export_videos_csv(videos, &ctx.evidence_dir.join("video_catalog.csv"))?;
+    export_videos_html(ctx, videos, &ctx.evidence_dir.join("index.html"))?;
+    Ok(())
+}
+
+fn export_videos_csv(videos: &[VideoEvidenceRecord], path: &Path) -> Result<()> {
+    let mut wtr = csv::Writer::from_path(path)?;
+    wtr.write_record([
+        "Asset ID",
+        "Filename",
+        "Media Type",
+        "Timestamp UTC",
+        "Source Path",
+        "Copied Path",
+        "Duration Seconds",
+        "Width",
+        "Height",
+        "Container",
+        "Video Codec",
+        "Audio Codec",
+        "File Size",
+        "SHA256",
+        "Latitude",
+        "Longitude",
+    ])?;
+    for video in videos {
+        wtr.write_record([
+            video.asset_id.clone().unwrap_or_default(),
+            video.filename.clone(),
+            video.media_type.clone(),
+            video.timestamp_utc.clone().unwrap_or_default(),
+            video
+                .source_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            video
+                .copied_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            video
+                .duration_seconds
+                .map(|value| format!("{:.3}", value))
+                .unwrap_or_default(),
+            video
+                .width
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            video
+                .height
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            video.container.clone().unwrap_or_default(),
+            video.video_codec.clone().unwrap_or_default(),
+            video.audio_codec.clone().unwrap_or_default(),
+            video
+                .file_size
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            video.sha256.clone().unwrap_or_default(),
+            video
+                .latitude
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            video
+                .longitude
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+        ])?;
+    }
+    wtr.flush()?;
+    Ok(())
+}
+
+fn export_videos_html(ctx: &AgentCtx, videos: &[VideoEvidenceRecord], path: &Path) -> Result<()> {
+    let rows = videos
+        .iter()
+        .map(|video| {
+            format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                html_escape(&video.media_type),
+                html_escape(&video.filename),
+                html_escape(&video.container.clone().unwrap_or_default()),
+                html_escape(&video.video_codec.clone().unwrap_or_default()),
+                video
+                    .duration_seconds
+                    .map(|value| format!("{:.1}s", value))
+                    .unwrap_or_default(),
+                html_escape(
+                    &video
+                        .copied_path
+                        .as_ref()
+                        .or(video.source_path.as_ref())
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default()
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let html = format!(
+        r#"<!doctype html>
+<html><head><meta charset="utf-8"><title>Vigil Video Catalog - {case}</title>
+<style>
+body {{ font-family: Arial, sans-serif; margin: 32px; color: #1f2933; }}
+h1 {{ font-size: 22px; margin-bottom: 4px; }}
+.meta {{ color: #5c6873; margin-bottom: 20px; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 12px; }}
+th, td {{ border: 1px solid #d8dee4; padding: 6px 8px; text-align: left; vertical-align: top; }}
+th {{ background: #eef2f6; }}
+td:last-child {{ overflow-wrap: anywhere; }}
+</style></head><body>
+<h1>Vigil Video Catalog</h1>
+<div class="meta">Case: {case} | Videos: {count}</div>
+<table><thead><tr><th>Type</th><th>File</th><th>Container</th><th>Video Codec</th><th>Duration</th><th>Path</th></tr></thead>
+<tbody>{rows}</tbody></table>
+</body></html>"#,
+        case = html_escape(ctx.case.name()),
+        count = videos.len(),
+        rows = rows
+    );
+    fs::write(path, html)?;
+    Ok(())
+}
+
+fn source_breakdown(videos: &[VideoEvidenceRecord]) -> BTreeMap<String, usize> {
+    let mut breakdown = BTreeMap::new();
+    for video in videos {
+        *breakdown.entry(video.media_type.clone()).or_insert(0) += 1;
+    }
+    breakdown
 }
 
 fn load_copy_manifest(path: &Path) -> Result<CopyManifest> {
@@ -482,5 +775,58 @@ fn valid_location(asset: &AssetRecord) -> (Option<f64>, Option<f64>) {
         (Some(location.latitude), Some(location.longitude))
     } else {
         (None, None)
+    }
+}
+
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_charon_assets_returns_empty_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let assets = load_charon_assets(&tmp.path().join("missing.json")).unwrap();
+        assert!(assets.is_empty());
+    }
+
+    #[test]
+    fn exports_video_catalog_csv() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("videos.csv");
+        let videos = vec![VideoEvidenceRecord {
+            schema_version: VIGIL_VIDEO_SCHEMA_VERSION,
+            asset_id: Some("intake_1".to_string()),
+            asset_numeric_id: None,
+            filename: "camera.mp4".to_string(),
+            media_type: "IntakeVideo".to_string(),
+            timestamp_utc: None,
+            source_path: Some(PathBuf::from("/tmp/camera.mp4")),
+            copied_path: Some(PathBuf::from("/tmp/managed.mp4")),
+            source_resolution_method: Some("intake_managed_copy".to_string()),
+            duration_seconds: Some(4.0),
+            width: Some(1920),
+            height: Some(1080),
+            container: Some("mov,mp4,m4a,3gp,3g2,mj2".to_string()),
+            video_codec: Some("h264".to_string()),
+            audio_codec: Some("aac".to_string()),
+            file_size: Some(10),
+            sha256: Some("abc".to_string()),
+            latitude: None,
+            longitude: None,
+        }];
+
+        export_videos_csv(&videos, &path).unwrap();
+        let csv = fs::read_to_string(path).unwrap();
+
+        assert!(csv.contains("camera.mp4"));
+        assert!(csv.contains("h264"));
     }
 }

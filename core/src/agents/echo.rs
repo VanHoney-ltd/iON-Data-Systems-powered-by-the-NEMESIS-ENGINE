@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
 
+use crate::agents::cerberus_models::VoicemailRecord;
 use crate::agents::{Agent, AgentCtx};
 use crate::common::prepared::compute_sha256;
-use crate::agents::cerberus_models::VoicemailRecord;
 use crate::evidence::EvidenceRecord;
 use serde::{Deserialize, Serialize};
 
@@ -94,7 +94,7 @@ impl Agent for EchoAgent {
                 source_agent: Self::NAME.to_string(),
                 record_type: "audio".to_string(),
                 timestamp: audio.timestamp_utc.clone().unwrap_or_default(),
-                payload: json!({
+                payload: strip_nulls(json!({
                     "record_id": audio.record_id,
                     "source_agent": audio.source_agent,
                     "source_db_path": audio.source_db_path.map(|p| p.display().to_string()),
@@ -107,11 +107,28 @@ impl Agent for EchoAgent {
                     "transcript": audio.transcript,
                     "transcript_method": audio.transcript_method,
                     "resolution_method": audio.resolution_method,
-                }),
+                })),
             });
         }
 
         Ok(records)
+    }
+}
+
+fn strip_nulls(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .filter_map(|(key, value)| {
+                    let cleaned = strip_nulls(value);
+                    (!cleaned.is_null()).then_some((key, cleaned))
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(strip_nulls).collect())
+        }
+        other => other,
     }
 }
 
@@ -155,7 +172,7 @@ fn load_voicemails(voicemail_dir: &Path) -> Result<Vec<VoicemailRecord>> {
     }
 
     let mut records_by_id: HashMap<i64, VoicemailRecord> = HashMap::new();
-    
+
     // Read unified voicemail_records.json written by Cerberus
     let unified_path = voicemail_dir.join("voicemail_records.json");
     if unified_path.exists() {
@@ -167,7 +184,7 @@ fn load_voicemails(voicemail_dir: &Path) -> Result<Vec<VoicemailRecord>> {
             records_by_id.entry(record.id).or_insert(record);
         }
     }
-    
+
     // Also read legacy voicemail_*.json files if present
     for entry in WalkDir::new(voicemail_dir)
         .max_depth(2)

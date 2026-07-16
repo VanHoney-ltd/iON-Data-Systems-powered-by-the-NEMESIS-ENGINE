@@ -3,6 +3,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    if env::var_os("CARGO_FEATURE_AFCCLIENT").is_none() {
+        return;
+    }
+
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let profile = env::var("PROFILE").unwrap();
@@ -13,7 +17,10 @@ fn main() {
 
     // Only build afcclient on Linux and macOS
     if target_os != "linux" && target_os != "macos" {
-        println!("cargo:warning=afcclient build skipped on unsupported OS: {}", target_os);
+        println!(
+            "cargo:warning=afcclient build skipped on unsupported OS: {}",
+            target_os
+        );
         return;
     }
 
@@ -23,16 +30,16 @@ fn main() {
     for src in &c_sources {
         let src_path = afcclient_src.join(src);
         if !src_path.exists() {
-            println!("cargo:warning=afcclient source missing: {}", src_path.display());
+            println!(
+                "cargo:warning=afcclient source missing: {}",
+                src_path.display()
+            );
             return;
         }
 
         let obj_path = out_dir.join(src.replace(".c", ".o"));
         let mut cmd = Command::new(compiler);
-        cmd.arg("-c")
-            .arg("-o")
-            .arg(&obj_path)
-            .arg(&src_path);
+        cmd.arg("-c").arg("-o").arg(&obj_path).arg(&src_path);
 
         if target_os == "linux" {
             cmd.arg("-fblocks");
@@ -49,7 +56,10 @@ fn main() {
             Ok(output) => {
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    println!("cargo:warning=afcclient compile failed for {}: {}", src, stderr);
+                    println!(
+                        "cargo:warning=afcclient compile failed for {}: {}",
+                        src, stderr
+                    );
                     return;
                 }
             }

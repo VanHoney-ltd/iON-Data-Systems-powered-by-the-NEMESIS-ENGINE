@@ -6,9 +6,7 @@ RELEASE_DIR="/home/ghost/iON/core/target/release"
 
 mkdir -p "$BIN_DIR"
 
-RELEASE_DIR="/home/ghost/iON/core/target/release"
-
-# Build release binaries with full features if any are missing
+# Build release binaries if any are missing
 NEEDS_BUILD=0
 for bin in ion chronos helios orpheus cerberus psyche charon hermes nyx obolus plutus vigil echo aether talos styg styg_verify xwin nemesis ion_ui ion_ui_export vox; do
   if [ ! -f "${RELEASE_DIR}/${bin}" ]; then
@@ -19,7 +17,7 @@ done
 
 if [ "$NEEDS_BUILD" -eq 1 ]; then
   echo "Building iON release binaries..."
-  cd /home/ghost/iON/core && cargo build --release --features full
+  cd /home/ghost/iON/core && cargo build --release
 fi
 
 BINS=(

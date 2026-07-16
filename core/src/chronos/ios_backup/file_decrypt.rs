@@ -3,12 +3,14 @@ use aes::Aes256;
 use aes_kw::KekAes256;
 use anyhow::{anyhow, Context, Result};
 use plist::Value;
+use rayon::prelude::*;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
@@ -122,6 +124,124 @@ pub fn find_entry(conn: &Connection, domain: &str, relative_path: &str) -> Resul
 }
 
 pub fn extract_specs(
+    backup_dir: &Path,
+    conn: &Connection,
+    class_keys: &BTreeMap<u32, Vec<u8>>,
+    output_root: &Path,
+    specs: &[crate::chronos::ios_backup::ExtractSpec],
+    error_log_path: Option<&Path>,
+    skip_log_path: Option<&Path>,
+) -> Result<ExtractStats> {
+    let mut entries = Vec::new();
+    let mut error_log = open_error_log(error_log_path);
+    let mut skip_log = open_skip_log(skip_log_path);
+
+    for spec in specs {
+        let mut stmt = conn.prepare(
+            "SELECT fileID, domain, relativePath, file FROM Files WHERE flags=1 AND relativePath LIKE ?1 AND domain LIKE ?2 ORDER BY domain, relativePath",
+        )?;
+        let mut rows =
+            stmt.query([spec.relative_paths_like.as_str(), spec.domain_like.as_str()])?;
+        while let Some(row) = rows.next()? {
+            let file_id: String = row.get(0)?;
+            let domain: String = row.get(1)?;
+            let relative_path: String = row.get(2)?;
+            let file_blob: Vec<u8> = row.get(3)?;
+            let file_plist = match FilePlist::from_bplist(&file_blob) {
+                Ok(p) => p,
+                Err(err) => {
+                    entries.push(QueuedExtract::Error(ErrorEntry {
+                        file_id,
+                        domain,
+                        relative_path,
+                        stage: "file_plist",
+                        message: err.to_string(),
+                    }));
+                    continue;
+                }
+            };
+
+            entries.push(QueuedExtract::Entry {
+                entry: ManifestEntry {
+                    file_id,
+                    domain,
+                    relative_path,
+                    file_plist,
+                },
+                spec: spec.clone(),
+            });
+        }
+    }
+
+    let total = entries.len();
+    eprintln!("HELiOS queued {} manifest entries", total);
+
+    let processed = AtomicUsize::new(0);
+    let outcomes: Vec<ExtractOutcomeLog> = entries
+        .into_par_iter()
+        .map(|queued| {
+            let outcome = match queued {
+                QueuedExtract::Error(err) => ExtractOutcomeLog::Error(err),
+                QueuedExtract::Entry { entry, spec } => {
+                    match decrypt_entry_to_root(backup_dir, class_keys, output_root, &entry, &spec)
+                    {
+                        Ok(ExtractOutcome::Extracted) => ExtractOutcomeLog::Extracted,
+                        Ok(ExtractOutcome::Skipped(skip_entry)) => {
+                            ExtractOutcomeLog::Skipped(skip_entry)
+                        }
+                        Err(err) => ExtractOutcomeLog::Error(ErrorEntry {
+                            file_id: entry.file_id.clone(),
+                            domain: entry.domain.clone(),
+                            relative_path: entry.relative_path.clone(),
+                            stage: "decrypt",
+                            message: format!("{:#}", err),
+                        }),
+                    }
+                }
+            };
+
+            let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
+            if done == total || done % 2_500 == 0 {
+                eprintln!("HELiOS progress: {}/{} files processed", done, total);
+            }
+
+            outcome
+        })
+        .collect();
+
+    let mut stats = ExtractStats::default();
+    for outcome in outcomes {
+        match outcome {
+            ExtractOutcomeLog::Extracted => stats.extracted += 1,
+            ExtractOutcomeLog::Skipped(skip_entry) => {
+                stats.skipped += 1;
+                write_skip(&mut skip_log, &skip_entry);
+            }
+            ExtractOutcomeLog::Error(error_entry) => {
+                stats.errors += 1;
+                write_error(&mut error_log, &error_entry);
+            }
+        }
+    }
+
+    Ok(stats)
+}
+
+enum QueuedExtract {
+    Entry {
+        entry: ManifestEntry,
+        spec: crate::chronos::ios_backup::ExtractSpec,
+    },
+    Error(ErrorEntry),
+}
+
+enum ExtractOutcomeLog {
+    Extracted,
+    Skipped(SkipEntry),
+    Error(ErrorEntry),
+}
+
+pub fn extract_specs_serial(
     backup_dir: &Path,
     conn: &Connection,
     class_keys: &BTreeMap<u32, Vec<u8>>,

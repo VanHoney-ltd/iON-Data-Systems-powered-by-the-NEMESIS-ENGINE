@@ -58,8 +58,7 @@ pub fn write_evidence(
         jsonl.push_str(&serde_json::to_string(record)?);
         jsonl.push('\n');
     }
-    fs::write(&jsonl_path, jsonl)
-        .with_context(|| format!("writing {}", jsonl_path.display()))?;
+    fs::write(&jsonl_path, jsonl).with_context(|| format!("writing {}", jsonl_path.display()))?;
 
     // records.csv — flatten to CSV using the payload fields
     if let Err(e) = write_csv(&csv_path, records) {
@@ -173,7 +172,10 @@ fn write_pdf_report(
     // Group records by type
     let mut by_type: HashMap<String, Vec<&EvidenceRecord>> = HashMap::new();
     for record in records {
-        by_type.entry(record.record_type.clone()).or_default().push(record);
+        by_type
+            .entry(record.record_type.clone())
+            .or_default()
+            .push(record);
     }
 
     if records.len() <= PDF_SPLIT_THRESHOLD {
@@ -181,8 +183,7 @@ fn write_pdf_report(
         let html_path = evidence_dir.join("report.html");
         let pdf_path = evidence_dir.join("report.pdf");
         let html = build_html_report(agent_name, case_name, records, false);
-        fs::write(&html_path, html)
-            .with_context(|| format!("writing {}", html_path.display()))?;
+        fs::write(&html_path, html).with_context(|| format!("writing {}", html_path.display()))?;
         convert_html_to_pdf(&html_path, &pdf_path)?;
         let _ = fs::remove_file(&html_path);
     } else {
@@ -213,7 +214,12 @@ fn write_pdf_report(
             fs::write(&type_html, html)
                 .with_context(|| format!("writing {}", type_html.display()))?;
             if let Err(e) = convert_html_to_pdf(&type_html, &type_pdf) {
-                log::warn!("PDF conversion failed for {} {}: {}", agent_name, record_type, e);
+                log::warn!(
+                    "PDF conversion failed for {} {}: {}",
+                    agent_name,
+                    record_type,
+                    e
+                );
             }
             let _ = fs::remove_file(&type_html);
         }
@@ -277,7 +283,12 @@ fn try_weasyprint(html_path: &Path, pdf_path: &Path) -> bool {
 /// Maximum characters for any single cell value.
 const PDF_CELL_TRUNCATE: usize = 300;
 
-fn build_html_report(agent_name: &str, case_name: &str, records: &[EvidenceRecord], summary_only: bool) -> String {
+fn build_html_report(
+    agent_name: &str,
+    case_name: &str,
+    records: &[EvidenceRecord],
+    summary_only: bool,
+) -> String {
     let now = Utc::now().to_rfc3339();
 
     let mut type_counts: HashMap<String, usize> = HashMap::new();
@@ -306,7 +317,11 @@ fn build_html_report(agent_name: &str, case_name: &str, records: &[EvidenceRecor
                 .iter()
                 .filter(|r| &r.record_type == record_type)
                 .collect();
-            sections.push_str(&build_record_type_section(record_type, *total_count, &type_records));
+            sections.push_str(&build_record_type_section(
+                record_type,
+                *total_count,
+                &type_records,
+            ));
         }
     } else {
         sections.push_str(r#"<div class="note" style="font-size:9pt;color:#444;margin:12px 0;padding:10px;background:#fffbe6;border-left:4px solid #f0a000;">
@@ -366,7 +381,12 @@ fn build_html_report(agent_name: &str, case_name: &str, records: &[EvidenceRecor
     )
 }
 
-fn build_record_type_full_pdf(agent_name: &str, case_name: &str, record_type: &str, records: &[&EvidenceRecord]) -> String {
+fn build_record_type_full_pdf(
+    agent_name: &str,
+    case_name: &str,
+    record_type: &str,
+    records: &[&EvidenceRecord],
+) -> String {
     let now = Utc::now().to_rfc3339();
     let sections = build_record_type_section(record_type, records.len(), records);
 
@@ -412,7 +432,11 @@ fn build_record_type_full_pdf(agent_name: &str, case_name: &str, record_type: &s
     )
 }
 
-fn build_record_type_section(record_type: &str, total_count: usize, records: &[&EvidenceRecord]) -> String {
+fn build_record_type_section(
+    record_type: &str,
+    total_count: usize,
+    records: &[&EvidenceRecord],
+) -> String {
     if records.is_empty() {
         return String::new();
     }
@@ -445,7 +469,7 @@ fn build_record_type_section(record_type: &str, total_count: usize, records: &[&
                     let val = record
                         .payload
                         .get(key)
-                        .map(format_json_value_compact)
+                        .map(|value| format_json_value_for_pdf(record_type, key, value))
                         .unwrap_or_else(|| "<span class=\"null\">null</span>".to_string());
                     format!("<td>{}</td>", val)
                 })
@@ -475,15 +499,16 @@ fn build_record_type_section(record_type: &str, total_count: usize, records: &[&
     )
 }
 
-fn format_json_value_compact(v: &serde_json::Value) -> String {
+fn format_json_value_for_pdf(record_type: &str, key: &str, v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => {
-            let truncated = if s.len() > PDF_CELL_TRUNCATE {
-                format!("{}…", &s[..PDF_CELL_TRUNCATE])
-            } else {
+            let keep_full = record_type == "note" && key == "body";
+            let text = if keep_full {
                 s.clone()
+            } else {
+                truncate_chars(s, PDF_CELL_TRUNCATE)
             };
-            escape_html(&truncated)
+            escape_html(&text).replace('\n', "<br>")
         }
         serde_json::Value::Null => "<span class=\"null\">null</span>".to_string(),
         serde_json::Value::Bool(b) => b.to_string(),
@@ -492,7 +517,7 @@ fn format_json_value_compact(v: &serde_json::Value) -> String {
             if arr.is_empty() {
                 "[]".to_string()
             } else if arr.len() == 1 {
-                format!("[{}]", format_json_value_compact(&arr[0]))
+                format!("[{}]", format_json_value_for_pdf(record_type, key, &arr[0]))
             } else {
                 format!("[{} items]", arr.len())
             }
@@ -504,6 +529,16 @@ fn format_json_value_compact(v: &serde_json::Value) -> String {
                 format!("{{{} fields}}", obj.len())
             }
         }
+    }
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut iter = value.chars();
+    let truncated: String = iter.by_ref().take(max_chars).collect();
+    if iter.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
     }
 }
 

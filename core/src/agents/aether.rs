@@ -11,8 +11,9 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-
 use crate::agents::charon_models::{AssetRecord, MediaType, CHARON_ASSET_SCHEMA_VERSION};
+use crate::agents::hermes::MediaCatalogItem;
+use crate::agents::intake::IntakeRecord;
 use crate::agents::{Agent, AgentCtx};
 use crate::evidence::EvidenceRecord;
 
@@ -37,6 +38,8 @@ pub struct LocationRecord {
     pub source_agent: String,
     pub source_resolution_method: Option<String>,
     pub confidence: f32,
+    #[serde(default)]
+    pub file_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -53,6 +56,11 @@ pub struct AetherReport {
     pub assets_with_resolved_source_path: usize,
     pub assets_with_copied_path: usize,
     pub assets_with_gps: usize,
+    pub intake_media_examined: usize,
+    pub intake_exif_gps_records: usize,
+    pub hermes_media_examined: usize,
+    pub hermes_media_resolved: usize,
+    pub hermes_exif_gps_records: usize,
     pub exif_gps_records: usize,
     pub db_location_records: usize,
     pub assets_skipped: usize,
@@ -77,6 +85,11 @@ struct LocationExtractionStats {
     assets_examined: usize,
     assets_with_resolved_source_path: usize,
     assets_with_copied_path: usize,
+    intake_media_examined: usize,
+    intake_exif_gps_records: usize,
+    hermes_media_examined: usize,
+    hermes_media_resolved: usize,
+    hermes_exif_gps_records: usize,
     exif_gps_records: usize,
     db_location_records: usize,
     source_less_db_location_assets: usize,
@@ -105,7 +118,17 @@ impl Agent for AetherAgent {
         let assets = load_charon_assets(&assets_path)?;
         let copy_manifest = load_copy_manifest(&manifest_path)?;
 
-        let (locations, stats) = collect_locations(&assets, &copy_manifest, &charon_dir);
+        let (mut locations, mut stats) = collect_locations(&assets, &copy_manifest, &charon_dir);
+        let (mut hermes_locations, hermes_stats) = collect_hermes_locations(ctx)?;
+        stats.hermes_media_examined = hermes_stats.0;
+        stats.hermes_media_resolved = hermes_stats.1;
+        stats.hermes_exif_gps_records = hermes_locations.len();
+        locations.append(&mut hermes_locations);
+        let (mut intake_locations, intake_examined) = collect_intake_locations(ctx)?;
+        stats.intake_media_examined = intake_examined;
+        stats.intake_exif_gps_records = intake_locations.len();
+        locations.append(&mut intake_locations);
+        export_aether_outputs(ctx, &locations)?;
 
         let mut warnings = Vec::new();
         if stats.source_less_db_location_assets > 0 {
@@ -144,6 +167,11 @@ impl Agent for AetherAgent {
             assets_with_resolved_source_path: stats.assets_with_resolved_source_path,
             assets_with_copied_path: stats.assets_with_copied_path,
             assets_with_gps: locations.len(),
+            intake_media_examined: stats.intake_media_examined,
+            intake_exif_gps_records: stats.intake_exif_gps_records,
+            hermes_media_examined: stats.hermes_media_examined,
+            hermes_media_resolved: stats.hermes_media_resolved,
+            hermes_exif_gps_records: stats.hermes_exif_gps_records,
             exif_gps_records: stats.exif_gps_records,
             db_location_records: stats.db_location_records,
             assets_skipped: stats.assets_examined.saturating_sub(locations.len()),
@@ -177,6 +205,9 @@ impl Agent for AetherAgent {
 }
 
 fn load_charon_assets(path: &Path) -> Result<Vec<AssetRecord>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
     let raw = fs::read(path)
         .with_context(|| format!("Failed to read Charon assets at {}", path.display()))?;
     let assets: Vec<AssetRecord> = serde_json::from_slice(&raw)
@@ -205,6 +236,11 @@ fn collect_locations(
         assets_examined: assets.len(),
         assets_with_resolved_source_path: 0,
         assets_with_copied_path: 0,
+        intake_media_examined: 0,
+        intake_exif_gps_records: 0,
+        hermes_media_examined: 0,
+        hermes_media_resolved: 0,
+        hermes_exif_gps_records: 0,
         exif_gps_records: 0,
         db_location_records: 0,
         source_less_db_location_assets: 0,
@@ -241,6 +277,7 @@ fn collect_locations(
                         source_agent: SOURCE_AGENT.to_string(),
                         source_resolution_method: asset.source_resolution_method.clone(),
                         confidence: EXIF_GPS_CONFIDENCE,
+                        file_name: Some(asset.filename.clone()),
                     });
                     stats.exif_gps_records += 1;
                     continue;
@@ -269,6 +306,7 @@ fn collect_locations(
                     source_agent: SOURCE_AGENT.to_string(),
                     source_resolution_method: asset.source_resolution_method.clone(),
                     confidence: DB_GPS_CONFIDENCE,
+                    file_name: Some(asset.filename.clone()),
                 });
                 stats.db_location_records += 1;
             }
@@ -281,6 +319,235 @@ fn collect_locations(
     }
 
     (locations, stats)
+}
+
+fn collect_intake_locations(ctx: &AgentCtx) -> Result<(Vec<LocationRecord>, usize)> {
+    let intake_path = ctx
+        .case
+        .evidence_path("intake")
+        .join("external_evidence.json");
+    let mut candidates = Vec::new();
+    if intake_path.exists() {
+        let raw =
+            fs::read(&intake_path).with_context(|| format!("reading {}", intake_path.display()))?;
+        let records: Vec<IntakeRecord> = serde_json::from_slice(&raw)
+            .with_context(|| format!("parsing {}", intake_path.display()))?;
+        for record in records {
+            if matches!(record.media_type.as_str(), "image" | "video") {
+                candidates.push((
+                    record.record_id,
+                    record.file_name,
+                    PathBuf::from(record.original_path),
+                    PathBuf::from(record.managed_path),
+                    record.modified_utc,
+                ));
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        let files_root = ctx.case.evidence_path("intake").join("files");
+        if files_root.exists() {
+            for entry in walkdir::WalkDir::new(files_root)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+            {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let path = entry.path();
+                if !supports_exif_gps(path) {
+                    continue;
+                }
+                let file_name = path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("media")
+                    .to_string();
+                candidates.push((
+                    format!("intake_{}", file_name),
+                    file_name,
+                    path.to_path_buf(),
+                    path.to_path_buf(),
+                    None,
+                ));
+            }
+        }
+    }
+
+    let examined = candidates.len();
+    let mut locations = Vec::new();
+    for (record_id, file_name, original_path, managed_path, modified_utc) in candidates {
+        if !supports_exif_gps(&managed_path) {
+            continue;
+        }
+        let Ok(Some(gps)) = extract_exif_gps(&managed_path) else {
+            continue;
+        };
+        locations.push(LocationRecord {
+            schema_version: AETHER_LOCATION_SCHEMA_VERSION,
+            asset_id: Some(record_id),
+            asset_numeric_id: None,
+            source_path: Some(original_path),
+            copied_path: Some(managed_path),
+            timestamp_utc: modified_utc,
+            latitude: Some(gps.latitude),
+            longitude: Some(gps.longitude),
+            altitude: gps.altitude,
+            method: "intake_exif_gps".to_string(),
+            source_agent: "intake".to_string(),
+            source_resolution_method: Some("intake_managed_copy".to_string()),
+            confidence: EXIF_GPS_CONFIDENCE,
+            file_name: Some(file_name),
+        });
+    }
+    Ok((locations, examined))
+}
+
+fn collect_hermes_locations(ctx: &AgentCtx) -> Result<(Vec<LocationRecord>, (usize, usize))> {
+    let catalog_path = ctx.case.evidence_path("hermes").join("media_catalog.json");
+    if !catalog_path.exists() {
+        return Ok((Vec::new(), (0, 0)));
+    }
+    let raw =
+        fs::read(&catalog_path).with_context(|| format!("reading {}", catalog_path.display()))?;
+    let catalog: Vec<MediaCatalogItem> = serde_json::from_slice(&raw)
+        .with_context(|| format!("parsing {}", catalog_path.display()))?;
+
+    let mut examined = 0usize;
+    let mut resolved = 0usize;
+    let mut locations = Vec::new();
+    for item in catalog {
+        if !is_image_media(&item) {
+            continue;
+        }
+        examined += 1;
+        let Some(path) = resolve_catalog_path(ctx, item.file_path.as_deref()) else {
+            continue;
+        };
+        resolved += 1;
+        if !supports_exif_gps(&path) {
+            continue;
+        }
+        let Ok(Some(gps)) = extract_exif_gps(&path) else {
+            continue;
+        };
+        locations.push(LocationRecord {
+            schema_version: AETHER_LOCATION_SCHEMA_VERSION,
+            asset_id: Some(item.id),
+            asset_numeric_id: None,
+            source_path: item.file_path.map(PathBuf::from),
+            copied_path: Some(path),
+            timestamp_utc: item.created_date.or(item.added_date),
+            latitude: Some(gps.latitude),
+            longitude: Some(gps.longitude),
+            altitude: gps.altitude,
+            method: "hermes_exif_gps".to_string(),
+            source_agent: item.source,
+            source_resolution_method: Some("hermes_catalog_path".to_string()),
+            confidence: EXIF_GPS_CONFIDENCE,
+            file_name: Some(item.filename),
+        });
+    }
+    Ok((locations, (examined, resolved)))
+}
+
+fn is_image_media(item: &MediaCatalogItem) -> bool {
+    item.mime_type.starts_with("image/")
+        || matches!(
+            item.media_type.to_ascii_lowercase().as_str(),
+            "image" | "photo" | "livephoto"
+        )
+}
+
+fn resolve_catalog_path(ctx: &AgentCtx, raw: Option<&str>) -> Option<PathBuf> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let expanded = expand_backup_relative_path(ctx, raw);
+    for candidate in expanded {
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn expand_backup_relative_path(ctx: &AgentCtx, raw: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        candidates.push(path);
+        return candidates;
+    }
+
+    let trimmed = raw
+        .strip_prefix("~/")
+        .or_else(|| raw.strip_prefix('/'))
+        .unwrap_or(raw);
+    candidates.push(ctx.backup_root.join(trimmed));
+    candidates.push(ctx.backup_root.join("MediaDomain").join(trimmed));
+    candidates.push(ctx.backup_root.join("HomeDomain").join(trimmed));
+    candidates.push(ctx.case.root_path().join(trimmed));
+    candidates
+}
+
+fn export_aether_outputs(ctx: &AgentCtx, locations: &[LocationRecord]) -> Result<()> {
+    fs::create_dir_all(&ctx.evidence_dir)?;
+    fs::write(
+        ctx.evidence_dir.join("locations.json"),
+        serde_json::to_vec_pretty(locations)?,
+    )?;
+    let mut wtr = csv::Writer::from_path(ctx.evidence_dir.join("locations.csv"))?;
+    wtr.write_record([
+        "Asset ID",
+        "File Name",
+        "Timestamp UTC",
+        "Latitude",
+        "Longitude",
+        "Altitude",
+        "Method",
+        "Source Agent",
+        "Confidence",
+        "Source Path",
+        "Copied Path",
+    ])?;
+    for location in locations {
+        wtr.write_record([
+            location.asset_id.clone().unwrap_or_default(),
+            location.file_name.clone().unwrap_or_default(),
+            location.timestamp_utc.clone().unwrap_or_default(),
+            location
+                .latitude
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            location
+                .longitude
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            location
+                .altitude
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            location.method.clone(),
+            location.source_agent.clone(),
+            location.confidence.to_string(),
+            location
+                .source_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            location
+                .copied_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+        ])?;
+    }
+    wtr.flush()?;
+    Ok(())
 }
 
 fn manifest_entry_for<'a>(

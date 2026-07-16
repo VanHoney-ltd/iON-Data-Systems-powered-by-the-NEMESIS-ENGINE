@@ -130,9 +130,7 @@ pub fn check_required(names: &[&str]) -> Result<()> {
     }
 
     let platform = std::env::consts::OS;
-    let mut msg = format!(
-        "Missing required external tool(s) for iON Data Systems:\n\n"
-    );
+    let mut msg = format!("Missing required external tool(s) for iON Data Systems:\n\n");
 
     for name in &missing {
         if let Some(tool) = TOOLS.iter().find(|t| t.name == *name) {
@@ -146,7 +144,10 @@ pub fn check_required(names: &[&str]) -> Result<()> {
                 tool.name, tool.required_by, install
             ));
         } else {
-            msg.push_str(&format!("  ❌ {} (unknown tool — please install it)\n\n", name));
+            msg.push_str(&format!(
+                "  ❌ {} (unknown tool — please install it)\n\n",
+                name
+            ));
         }
     }
 
