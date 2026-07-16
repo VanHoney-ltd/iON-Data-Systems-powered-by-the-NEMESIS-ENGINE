@@ -1,130 +1,52 @@
-# STYGiON Refactor – Agent Orchestration Framework
+# iON Agent Orchestration — Aligned with NEMESIS Kernel-First Plan
 
-This document defines the standardized two-agent workflow used for the complete refactor of the STYGiON project (Rust + Go/Wails + Svelte 5).
+**Status**: Aligned with the approved NEMESIS kernel-first plan.  
+**Authoritative plan**: [iON NEMESIS Kernel-First Implementation Plan](../docs/superpowers/plans/2026-05-14-ion-nemesis-kernel-first.md)  
+**Authoritative design spec**: [iON NEMESIS Kernel-First Replatform Design](../docs/superpowers/specs/2026-05-14-ion-nemesis-kernel-first-design.md)  
+**Last reconciled**: 2026-07-01
 
-## Project Overview
+## Notice
 
-STYGiON is a high-performance, privacy-first backup & media management application capable of handling 90GB+ encrypted backups with a responsive desktop UI.
+The previous STYGiON two-agent framework described in this file has been retired. All agent work must follow the approved NEMESIS kernel-first plan.
 
-**Core Architecture**
+## Required Skills
 
-- **Rust CLI Core** – Heavy I/O, decryption, parsing, NDJSON streaming
-- **Go (Wails) Orchestrator** – Process management, streaming, event emission, asset serving
-- **Svelte 5 Frontend** – Modern runes-based UI with virtualized lists (14k+ items)
+The approved plan requires agentic workers to use one of the following skills:
 
-Authoritative specification lives in `REFACTOR.md`.
+- `superpowers:subagent-driven-development` (recommended)
+- `superpowers:executing-plans`
 
----
+## Core Workflow
 
-## Agent Roles
+1. **Read the approved plan** — Start every task from `docs/superpowers/plans/2026-05-14-ion-nemesis-kernel-first.md`.
+2. **Analyze** — Review relevant files in `/home/ghost/iON-nemesis` and the approved plan.
+3. **Plan** — Produce a detailed, atomic implementation plan aligned with milestone 1 scope.
+4. **Validate** — Check the plan against the approved constraints before building.
+5. **Implement** — Execute one task at a time.
+6. **Verify** — Run `make test`, `make verify`, and any relevant checks.
+7. **Handoff** — Return results for review before starting the next task.
 
-### Big Pickle  – Planner / Architect
+## Strict Boundaries
 
-- Responsible for **system design, planning, validation, and high-level decisions**.
-- Must deeply analyze `REFACTOR.md` before any output.
-- Produces detailed plans, architecture refinements, task breakdowns, validation checklists, and example prompts.
-- **Never writes production code**.
-
-### Big Pickle – Builder / Implementer
-
-- Responsible for **writing, testing, and refining production code**.
-- Follows plans and constraints provided by Big Pickle exactly.
-- Implements features, fixes, performance improvements, and tests.
-- **Never redesigns architecture** or deviates from the approved plan.
-
----
-
-## Core Workflow (OpenCode Build Mode)
-
-1. **Analyze** – Big Pickle reads `REFACTOR.md` + current codebase
-2. **Plan** – Big Pickle creates detailed implementation plan + validation checklist
-3. **Validate** – Big Pickle and human review plan for alignment and completeness
-4. **Build** – Big Pickle executes the plan (one task at a time)
-5. **Verify** – Tests pass + manual review against Definition of Done
-6. **Handoff** – Results returned to Big Pickle for next iteration if needed
-
----
-
-## Strict Boundaries & Guardrails
-
-- Big Pickle **must not** produce implementation code
-- Big Pickle **must not** alter architecture, introduce new major components, or ignore `REFACTOR.md`
-- All agents must treat `REFACTOR.md` as the single source of truth
-- No external network calls after initial setup
-- No blocking operations in Go main thread
-- No legacy Svelte syntax – only Svelte 5 Runes (`$state`, `$derived`, etc.)
-- Large files must be streamed, never fully loaded into memory
-
----
+- The approved NEMESIS plan is the single source of truth.
+- The new implementation lives in `/home/ghost/iON-nemesis`, not in `/home/ghost/iON`.
+- `/home/ghost/iON` is reference-only for milestone 1; do not mutate, delete, or copy legacy files into the new repo unless explicitly selected, reviewed, and safe.
+- Milestone 1 is a kernel-first vertical slice. Phoenix, UI, DuckDB analytics, and real decrypted data are deferred.
+- No real decrypted backup data may be used in milestone 1.
+- Tests and validation must use synthetic input only.
 
 ## Key Technical Contracts
 
-**Rust CLI**
+- OTP application boots a supervision tree with `Nemesis.AgentRegistry`, `Nemesis.JobPlanner`, `Nemesis.TaskRouter`, `Nemesis.StateStore`, `Nemesis.JobQueue`, `Nemesis.EventLog`, `Nemesis.ArtifactIndex`, `Nemesis.OutputValidator`, `Nemesis.ReproManifest`, and `Nemesis.FailureRecovery`.
+- Oban uses SQLite for durable jobs and persisted state.
+- Chronos is the first executable agent; it runs against synthetic input and writes a validated `chronos.intake.v1` artifact.
+- Required reproducibility commands: `make bootstrap`, `make test`, `make run`, `make run-agents`, `make verify`, `make archive`.
+- Required data-safety deliverables: `.gitignore`, archive exclusion manifest, `docs/DATA_POLICY.md`, `docs/PII_REDACTION.md`, `docs/DEVELOPMENT_DATA_RULES.md`, `scripts/pii_scan.sh`, `scripts/sanitize_dev_data.sh`, and `scripts/pre_archive_validation.sh`.
 
-- Accepts `--path <backup_dir> --json`
-- Outputs NDJSON to stdout
-- Emits progress via `{"type":"progress", "value":0.45, "msg":"..."}`
+## Definition of Done
 
-**Go (Wails) Orchestrator**
-
-- Uses `os/exec` + `bufio.Scanner` for Rust communication
-- Emits events via Wails runtime
-- Serves assets via streaming `AssetHandler`
-
-**Svelte 5 Frontend**
-
-- Must use runes reactivity
-- Virtualized rendering for large datasets
-- High-performance search and gallery views
-
----
-
-## Task Lifecycle Stages
-
-Every major task must follow:
-
-1. **Analyze** – Review relevant files and `REFACTOR.md`
-2. **Plan** – Detailed breakdown (Big Pickle)
-3. **Validate** – Checklist review
-4. **Implement** – Atomic, testable changes (Big Pickle)
-5. **Test** – Unit + integration + performance
-6. **Verify** – Meets Definition of Done
-
----
-
-## Definition of Done (DoD)
-
-- Code follows all constraints in `REFACTOR.md`
-- All new code is properly typed and documented
-- Unit + integration tests added/updated
-- UI changes maintain 60 fps on large datasets
-- No memory spikes on large backups
-- Passes validation checklist
-- Human review confirms alignment
-
----
-
-## Example Task Prompts
-
-### Rust CLI Example
-
-"Enhance the Rust parser to support new metadata fields while maintaining NDJSON streaming output and progress reporting."
-
-### Go Orchestrator Example
-
-"Improve streaming pipeline between Rust process and frontend with proper error handling and cancellation support."
-
-### Svelte 5 Example
-
-"Implement virtualized gallery view using Svelte 5 runes that can smoothly handle 14,000+ items with search filtering."
-
----
-
-## Usage Instructions
-
-1. Always start a new task by having Big Pickle read the latest `REFACTOR.md`
-2. Use this `AGENTS.md` as the governing document for all agent interactions
-3. Keep handoffs clean: Big Pickle output becomes the exact input for Big Pickle
-4. Maintain a running `TASK.md` for the current sprint/epic
-
-**This framework ensures architectural integrity while maximizing implementation velocity.**
+- Implementation matches the approved plan and this document.
+- All new code is properly typed and documented.
+- Unit and integration tests pass.
+- `make test`, `make verify`, and `make archive` succeed where applicable.
+- No real operator data enters commits, build outputs, archives, logs, docs, examples, screenshots, or test fixtures.

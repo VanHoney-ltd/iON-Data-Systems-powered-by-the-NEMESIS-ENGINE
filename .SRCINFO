@@ -1,0 +1,21 @@
+pkgbase = ion-core-cli
+	pkgdesc = iON command-line pipeline for mobile acquisition, decrypt, evidence extraction, review, and export
+	pkgver = 2.1.0
+	pkgrel = 1
+	url = https://github.com/VanHoney-ltd/iON-Data-Systems-powered-by-the-NEMESIS-ENGINE
+	arch = x86_64
+	license = LicenseRef-iON-Source-Available
+	makedepends = cargo
+	makedepends = git
+	makedepends = rust
+	depends = libimobiledevice
+	depends = openssl
+	provides = chronos
+	provides = helios
+	provides = minios
+	conflicts = ion-data-systems
+	options = !debug
+	source = ion-core-cli::git+https://github.com/VanHoney-ltd/iON-Data-Systems-powered-by-the-NEMESIS-ENGINE.git#branch=nemesis-cli-aur-ready
+	sha256sums = SKIP
+
+pkgname = ion-core-cli

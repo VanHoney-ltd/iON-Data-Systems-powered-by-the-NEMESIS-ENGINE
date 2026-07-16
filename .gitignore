@@ -3,8 +3,31 @@
 **/dist-ssr/
 **/target/
 **/target-win/
+/.pkg-target/
 **/output/
 **/cases/
 **/reports/
 **/*.log
 .DS_Store
+
+# Local editor and agent state
+/.vscode/
+/.superpowers/
+
+# Forensic case material and generated review output
+/attachments/
+/prepared/
+/backup_cases.json
+/backup_cases_manifest.json
+/backup_manifest.json
+/core/src/scan_results/
+
+# Local packaging and compiled application artifacts
+/pkg/
+/ion/ion
+/nemesis-desktop/nemesis-desktop
+
+# Local UI experiments and unrelated scratch tools
+/ionview.html
+/ui_component_checklist.html
+/tattoo-wrap
