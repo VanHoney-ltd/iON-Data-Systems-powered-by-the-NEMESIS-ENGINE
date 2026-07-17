@@ -25,6 +25,7 @@
 # Local packaging and compiled application artifacts
 /pkg/
 /ion/ion
+/ion/tmp/
 /nemesis-desktop/nemesis-desktop
 
 # Local UI experiments and unrelated scratch tools
